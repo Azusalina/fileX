@@ -129,7 +129,7 @@ terminal = false
         path.write_text('[keys]\nquit="q"')
         self.assertEqual(load_config(path).keys["quit"], "Q")
 
-    def test_siblings_and_vertical_config_migrate_old_parent_key(self):
+    def test_siblings_and_legacy_config_migration(self):
         self.browser.expand_all()
         self.browser.right()
         left = self.browser.selected
@@ -145,7 +145,7 @@ terminal = false
         self.assertIs(self.browser.selected, left)
         self.assertTrue(left.expanded)
         path = self.root / "settings.conf"
-        path.write_text('[layout]\norientation="vertical"\n[keys]\nparent="u"\n[tmux]\nopen_in_right_pane=false\n')
+        path.write_text('[layout]\norientation="vertical"\n[keys]\nparent="u"\ntoggle_tree="v"\nrename="R"\nrefresh="r"\n[tmux]\nopen_in_right_pane=false\n')
         conf = load_config(path)
         self.assertEqual(key_map(conf)["left"], "parent")
         self.assertNotIn("u", key_map(conf))
@@ -155,14 +155,15 @@ terminal = false
         layout = Layout(self.browser)
         parent = layout.by_node[self.browser.root]
         children = [layout.by_node[child] for child in self.browser.root.children]
-        self.assertTrue(all(child.y > parent.y for child in children))
-        self.assertEqual(children[0].y, children[1].y)
-        self.assertLess(children[0].x, children[1].x)
-        from filex.core import cell_width
-        center = parent.x + cell_width(parent.label) // 2
-        self.assertIn(layout.line_cells(0, 0, layout.width, layout.height)[center, children[0].y - 1], {"┴", "┼"})
-        self.assertIn("┌", plain_tree(self.browser))
-        self.assertIn("┐", plain_tree(self.browser))
+        self.assertEqual(parent.y, children[0].y)
+        self.assertGreater(children[0].x, parent.x)
+        self.assertNotIn("v", key_map(conf))
+        self.assertFalse(hasattr(conf, "orientation"))
+        self.assertEqual(key_map(conf)["r"], "rename")
+        self.assertEqual(key_map(conf)["R"], "rename")
+        self.assertEqual(key_map(conf)["\x12"], "refresh")
+        self.assertEqual(key_map(conf)["ctrl+alt+c"], "copy_path")
+
 
 
 if __name__ == "__main__":

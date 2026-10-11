@@ -24,15 +24,30 @@ class TerminalTests(unittest.TestCase):
             victim.write_text("recoverable fixture")
             (root / "nested").mkdir()
             (root / "nested" / "sample.txt").write_text("sample")
+            runner = root / "nested/script 空格.py"
+            runner.write_text("from pathlib import Path\nPath('runner-created.txt').write_text('PYTHON-RAN')\nprint('PYTHON-RUNNER-RETURNED')\n")
             import json
             config = root / ".settings.conf"
             editor_code = 'import pathlib,sys; pathlib.Path(sys.argv[1]).write_text("edited"); print("EDITOR-RETURNED")'
-            config.write_text('[openers.fixture]\nlabel="Fixture editor"\nterminal=true\ncommand=' + json.dumps([sys.executable, "-c", editor_code, "{path}"]) + '\n[open_defaults]\n".txt"="fixture"\n')
+            config.write_text('[openers.fixture]\nlabel="Fixture editor"\nterminal=true\ncommand=' + json.dumps([sys.executable, "-c", editor_code, "{path}"]) + '\n[open_defaults]\n".txt"="fixture"\n".py"="python"\n')
+            helpers = root / ".bin"
+            helpers.mkdir()
+            clipboard = root / ".clipboard"
+            im_state = root / ".im-state"
+            im_state.write_text("pinyin")
+            im_calls = root / ".im-calls"
+            for name, code in {
+                "wl-copy": f"import sys; from pathlib import Path; Path({str(clipboard)!r}).write_bytes(sys.stdin.buffer.read())",
+                "fcitx5-remote": f"import sys; from pathlib import Path; state=Path({str(im_state)!r}); calls=Path({str(im_calls)!r}); calls.open('a').write(' '.join(sys.argv[1:])+'\\n'); print(state.read_text()) if '-n' in sys.argv else state.write_text(sys.argv[-1])",
+            }.items():
+                helper = helpers / name
+                helper.write_text(f"#!{sys.executable}\n" + code + "\n")
+                helper.chmod(0o700)
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 26, 110, 0, 0))
             process = subprocess.Popen([str(Path(__file__).resolve().parents[1] / "filex.sh"), str(root), "--config", str(config)],
                                        stdin=slave, stdout=slave, stderr=slave,
-                                       cwd=Path(__file__).resolve().parents[1], env={**{k: v for k, v in os.environ.items() if k not in {"TMUX", "TMUX_PANE"}}, "TERM": "xterm-256color", "XDG_DATA_HOME": str(data)})
+                                       cwd=Path(__file__).resolve().parents[1], env={**{k: v for k, v in os.environ.items() if k not in {"TMUX", "TMUX_PANE"}}, "TERM": "xterm-256color", "XDG_DATA_HOME": str(data), "PATH": str(helpers) + os.pathsep + os.environ["PATH"]})
             os.close(slave)
             output = bytearray()
             def drain(timeout=.1):
@@ -59,6 +74,9 @@ class TerminalTests(unittest.TestCase):
                 drain(.3)
                 send("a中文.txt\r")
                 exists("中文.txt")
+                self.assertEqual(im_state.read_text(), "keyboard-us")
+                send("r\x15first-name.txt\r")
+                exists("first-name.txt")
                 send("R\x15renamed.txt\r")
                 exists("renamed.txt")
                 self.assertFalse((root / "中文.txt").exists())
@@ -82,9 +100,22 @@ class TerminalTests(unittest.TestCase):
                 self.assertEqual((root / "nested/sample.txt").read_text(), "edited")
                 self.assertIn(b"EDITOR-RETURNED", output)
                 self.assertIsNone(process.poll())
+                send("\x1b\x03")
+                self.assertIsNone(process.poll())
+                self.assertEqual(clipboard.read_text(), str(root / "nested/sample.txt"))
+                self.assertIn("已复制绝对路径".encode(), output)
                 send("\x1b[D")
+                send("\x1b[99;7u")  # enhanced Ctrl+Alt+C (CSI-u)
+                self.assertEqual(clipboard.read_text(), str(root / "nested"))
                 send("v")
-                self.assertIn("纵向树".encode(), output)
+                self.assertNotIn("纵向树".encode(), output)
+                send("\x06\x15script 空格\r")
+                send("o")
+                self.assertEqual((root / "nested/runner-created.txt").read_text(), "PYTHON-RAN")
+                self.assertIn(b"PYTHON-RUNNER-RETURNED", output)
+                self.assertIn("按 Enter 返回 filex".encode(), output)
+                send("\r")
+                self.assertIsNone(process.poll())
                 send("\r\x1b")
                 self.assertIn("打开方式".encode(), output)
                 send("\x06\x15delete-me\r")
@@ -105,9 +136,12 @@ class TerminalTests(unittest.TestCase):
                 import signal
                 process.send_signal(signal.SIGWINCH)
                 drain(.15)
-                send("LHr")
+                send("LH\x12\x1b[15~")
                 send("Q")
                 self.assertEqual(process.wait(timeout=3), 0)
+                self.assertEqual(im_state.read_text(), "pinyin")
+                self.assertIn("--check -s keyboard-us", im_calls.read_text())
+                self.assertIn("--check -s pinyin", im_calls.read_text())
                 self.assertNotIn(b"Traceback", output)
                 self.assertIn(b"filex", output)
                 self.assertNotIn("Rust · 横向目录树".encode(), output)

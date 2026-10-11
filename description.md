@@ -1,18 +1,18 @@
-# filex 1.3
+# filex 1.4
 
 ## 当前范围与版本
 
 2026-10-11：在原有文件管理功能基础上增加 q 信息面板、Ctrl+F 递归名称搜索、分支全部展开 / 收起、可配置打开程序和扩展名配色、保留树状态的上级根目录导航。随后按用户要求把默认 TUI 重构为 Rust，保留现有 Python/PySide6 GUI；GUI 的 <50 MB 目标留待单独优化。当前 TUI 的实测目标为应用 release 进程 RSS <15 MB。
 
-## 导航、布局与 tmux
+## 导航与 tmux
 
-方向键随布局旋转：横向 ↑/↓ 选择同级、→ 展开 / 进入子级、← 返回父级；纵向 ←/→ 选择同级、↓ 展开 / 进入子级、↑ 返回父级。j/k 仍是同级前后选择，l 仍是展开 / 进入。同级选择只在 parent.children 中移动，越界时停在同级首末项；根节点无兄弟时不移动，已展开目录也不会让同级选择进入后代。返回父级键直接选择父节点，不收起任何分支；在根节点使用它时，将原根节点挂到新父节点下并选中新根，旧分支的节点身份与展开状态保留。h 仅收起选中的目录。f / keys.focus_root 将选中目录（文件时为其父目录）设为根，并重新读取目录；保留该子树展开状态、清空搜索、重置视口。Rust 会释放当前根以外的缓存，之后可用返回父级键重新引入上级目录。旧 parent=u 配置自动迁移为 Left；该配置名称沿用横向基准，纵向的固定父级方向键为 Up。
+↑/↓ 选择同级、→ 展开 / 进入子级、← 返回父级。j/k 仍是同级前后选择，l 仍是展开 / 进入。同级选择只在 parent.children 中移动，越界时停在同级首末项；根节点无兄弟时不移动，已展开目录也不会让同级选择进入后代。返回父级键直接选择父节点，不收起任何分支；在根节点使用它时，将原根节点挂到新父节点下并选中新根，旧分支的节点身份与展开状态保留。h 仅收起选中的目录。f / keys.focus_root 将选中目录（文件时为其父目录）设为根，并重新读取目录；保留该子树展开状态、清空搜索、重置视口。Rust 会释放当前根以外的缓存，之后可用返回父级键重新引入上级目录。旧 parent=u 配置自动迁移为 Left。
 
-v / keys.toggle_tree 切换横向与纵向布局，配置 layout.orientation 可设默认 horizontal / vertical；临时切换不自动写回配置。两种界面共用同一节点树，纵向布局为母节点在上、子节点在下并排的树图。自底向上计算各子树宽度，给不同分支预留独立区域；各层间留连接线行，同级子节点左右排列，母节点尽量居于首末子节点的中间，长标签受所在子树范围约束。GUI 提供「纵向树」按钮。TUI 标题与 GUI 窗口标题均为 filex。
+TUI 与 GUI 均只保留横向树，标题为 filex。r 和 Shift+R 重命名，Ctrl+R 或 F5 刷新；旧配置 refresh=r / rename=R 自动迁移为新默认键。Ctrl+Alt+C 复制当前 file/folder 的绝对路径，不解析选中符号链接的目标、不添加换行。Rust / 旧 Python TUI 通过 wl-copy 标准输入复制到 Wayland 剪贴板，GUI 使用 Qt 剪贴板；不经过 shell。传统终端的 Esc + Ctrl+C 和增强 CSI-u 编码、隔离 tmux 的组合键均有集成验证。单独 Ctrl+C 仍退出 TUI。旧 layout.orientation / keys.toggle_tree 配置仅被忽略，运行时没有对应状态或动作。
 
 Rust TUI 打开 terminal=true 程序时，tmux.open_in_right_pane=true 会检查当前 window 中位于右侧、垂直范围有交集的 pane，优先最近者。仅复用常见 shell（bash/zsh/fish/sh/dash/ksh）的普通屏幕：shell 必须在休眠等待、占有前台进程组且没有子进程；光标行必须是没有输入草稿的常规提示符（末尾 $/#/%/>）。复制模式、程序运行中、有草稿或无法识别的自定义提示符均回退当前终端。pane 状态检查到发送之间仍有极短的竞态窗口；这是对已存在交互 shell 的复用，不创建或终止 pane。
 
-路由通过 tmux send-keys 排队带单引号转义的字面参数，使用 env 和解析后的绝对可执行路径，避免 shell alias / function 和文件名中的命令替换；包含换行或非 UTF-8 参数时回退直接执行。成功后聚焦目标 pane，filex 留在原 pane 并保留树状态。GUI 的终端程序继续使用 Konsole。可用 [tmux] open_in_right_pane=false 关闭路由。
+路由通过 tmux send-keys 排队带单引号转义的字面参数，使用 env -C（文件所在目录）和解析后的绝对可执行路径，避免 shell alias / function 和文件名中的命令替换；包含换行或非 UTF-8 参数时回退直接执行。成功后聚焦目标 pane，filex 留在原 pane 并保留树状态。GUI 的终端程序继续使用 Konsole。可用 [tmux] open_in_right_pane=false 关闭路由。
 
 Bash alias 保留；另安装 ~/.local/bin/filex，让 tmux split-window / new-window 和非交互 shell 可以调用，不依赖 alias 展开。启动脚本保持调用者当前目录；现有 ~/.config/tmux/tmux.conf 已将普通方向键传给应用，未改动用户 tmux 配置或活跃会话。
 
@@ -30,15 +30,24 @@ Bash alias 保留；另安装 ~/.local/bin/filex，让 tmux split-window / new-w
 
 [内存测量记录](memory-validation.json) 使用真实 PTY 的 Linux `/proc/<pid>/status` `VmHWM`，覆盖浏览、全部展开、收起、刷新、Dashboard、搜索、预览和上级根导航。计入 release 应用进程的 resident memory；不计终端、测量脚本、编译器和用户选择打开的外部程序。MB 使用 1000000 bytes，报告也列出 MiB。
 
-首次测量峰值：项目目录 3.469 MB，20000 个文件的单目录 3.809 MB，7200 个文件的多分支目录 6.410 MB。v1.3 测量峰值分别为 3.998 / 3.94 / 6.275 MB，包含纵向布局切换；最终构建的精确数值以 JSON 中的记录为准。
+首次测量峰值：项目目录 3.469 MB，20000 个文件的单目录 3.809 MB，7200 个文件的多分支目录 6.410 MB。历史 v1.3 测量峰值分别为 3.998 / 3.94 / 6.275 MB。v1.4 最终 release 峰值分别为 3.781 / 3.822 / 6.324 MB，三个默认配置场景均低于 15 MB；对应二进制 SHA256 和操作序列以 JSON 中的记录为准。
 
 ## 文件信息与打开方式
 
 Rust Dashboard 使用 Linux statx 的 BTIME 和文件元数据；创建时间未提供时显示不可用，不用 ctime 冒充。GUI 使用现有元数据功能，调用 GNU stat 获取真正 birth time。修改时间为 mtime。普通文件显示字节数，目录显示自身元数据大小，符号链接显示链接自身大小，均有标识。
 
-`[openers.NAME]` 定义 label、command 参数列表和 terminal 布尔值，`{path}` 替换完整文件路径，普通直接打开使用参数数组；复用 tmux 空闲 shell 时按上述转义规则发送命令。Enter 显示打开方式菜单，按 `[open_defaults]` 的最长扩展名后缀排序默认项；`o` 直接打开。目录菜单另有 fileX 展开 / 收起选项。TUI 的 terminal=true 程序先尝试 tmux 右侧 pane；在当前终端运行时恢复终端模式，退出后回到原树；GUI 使用 Konsole。已加入 Nano：openers.nano 的 command=["nano", "--", "{path}"]、terminal=true；Enter 菜单可选择，也可在 open_defaults 中把指定后缀映射为 nano。未安装的程序明确提示。
+`[openers.NAME]` 定义 label、command 参数列表、terminal 与可选 copy_path / pause_on_exit 布尔值，`{path}` 替换完整文件路径，{filex} / {toolkit} 分别替换为本产品目录 / 相邻 toolkit 目录，普通直接打开使用参数数组；复用 tmux 空闲 shell 时按上述转义规则发送命令。Enter 显示打开方式菜单，按 `[open_defaults]` 的最长扩展名后缀排序默认项；`o` 直接打开。目录菜单另有 fileX 展开 / 收起选项。TUI 的 terminal=true 程序先尝试 tmux 右侧 pane；在当前终端运行时恢复终端模式，退出后回到原树；GUI 使用 Konsole。已加入 Nano：openers.nano 的 command=["nano", "--", "{path}"]、terminal=true；Enter 菜单可选择，也可在 open_defaults 中把指定后缀映射为 nano。未安装的程序明确提示。
 
-`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 直接发出终端 RGB 颜色，Konsole 已支持；终端自身的颜色能力会影响实际显示。GUI 使用相同颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
+`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 直接发出终端 RGB 颜色，Konsole 已支持；终端自身的颜色能力会影响实际显示。GUI 使用相同颜色。默认新增 .r / .cpp / .sh / .mp3 / .mp4 颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox， .md / .markdown 使用 toolkit 渲染后在 Firefox 打开，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
+
+
+Python 执行项使用 command=["python", "{path}"]、terminal=true、pause_on_exit=true。当前 TUI 终端执行结束后等待 Enter / Esc，GUI Konsole 使用 --hold 保留结果，tmux pane 留下输出与 shell 提示符。Enter 可选「Python 执行」；把 open_defaults 的 .py 改为 python 后 o 直接运行。终端程序的工作目录为选中文件所在目录（选中目录时为目录本身）；tmux 复用也应用此目录，但不修改该 pane shell 的工作目录。Python、编辑器与浏览器为外部程序，其内存不计入 TUI 的 15 MB 目标。
+
+Markdown 默认 opener 为 markdown：copy_path=true 先复制文件绝对路径，再运行 [scripts/open_markdown.mjs](scripts/open_markdown.mjs)。适配器动态引用相邻 [toolkit](../toolkit/README.md) 的 createToolkit，给目标文件分配 loopback 随机端口，并执行 Firefox --new-tab 本地 URL。已有 toolkit 服务、页面及 4177 端口保持独立；原文件不被适配器修改。保存后渲染更新，PDF 仍需在 toolkit 页面明确导出。每次打开有独立 Node 渲染进程；有预览事件连接时保持运行，最后连接断开后无请求 30 分钟自动退出，没有页面连接时也按该超时退出。TUI / GUI 退出不关闭已打开的预览。错误、资源上限与格式支持遵循 toolkit 文档。需要 Node 22+、Firefox 和 toolkit 已安装的 npm 依赖；Mermaid / PDF 还需要 Chromium。command 中 --toolkit 后可改为自定义绝对目录，--browser 后可改为其他兼容 --new-tab 的浏览器。
+
+## TUI 英文输入法
+
+本机使用 Fcitx5，EnglishGuard 在真实 TUI 启动时查询当前 method 并切到 keyboard-us；没有 Fcitx5 服务或工具时继续启动。已有英文键盘时不重复切换；配置 [input_method] auto_english=false 可关闭。正常退出、Ctrl+C 退出或 Rust 错误返回时恢复进入前的 method。只调整当前 Fcitx 状态，不改 profile、系统语言或快捷键，也不应用于 GUI / --print-tree。SIGKILL / 强制终止无法执行恢复；其他输入法框架目前未接入。
 
 ## 文件操作边界
 
@@ -51,25 +60,26 @@ TUI 的 Delete 键与 D 均调用 gio trash，输入 YES 才移到回收站；Es
 | 区段 | 可自定义内容 |
 |---|---|
 | browser | show_hidden, directories_first, sort, max_entries, max_expand_nodes, max_loaded_nodes（Rust TUI） |
-| layout | orientation, column_gap, max_label_width, row_spacing |
+| layout | column_gap, max_label_width, row_spacing |
 | tmux | open_in_right_pane（Rust TUI） |
+| input_method | auto_english（Fcitx5 TUI） |
 | dashboard | dashboard_width（TUI） |
 | search | search_max_results, search_scan_limit |
 | preview | preview_bytes |
 | gui | gui_font_size |
 | colors | GUI 主题、文件夹 / 文件 / 连接线颜色 |
 | extension_colors | 扩展名 → #RRGGBB；两种界面适用 |
-| openers | 程序名称 → label / command / terminal |
+| openers | 程序名称 → label / command / terminal / copy_path / pause_on_exit |
 | open_defaults | 扩展名 → 已定义的程序名称 |
-| keys | 单字符 / Ctrl+字母快捷键，parent 支持 Left，toggle_tree 默认 v |
+| keys | 单字符 / Ctrl+字母 / Ctrl+Alt+字母快捷键，parent 支持 Left |
 
 默认个人配置路径是 XDG_CONFIG_HOME/fileX/fileX.conf；源 [fileX.conf](fileX.conf) 给出完整样本。类型、范围、未知区段 / 字段、程序引用、颜色、快捷键重复会被拒绝，重载失败保留旧配置。旧配置 quit=q 且未定义 dashboard 时自动迁移为 quit=Q。Ctrl+F 与 / 固定搜索，Ctrl+L 固定路径输入；导航字符和终端控制组合保留。
 
 ## 文件与维护
 
 - `Cargo.toml` / `Cargo.lock`：Rust 依赖与锁定版本，release 使用 LTO / stripped binary。
-- `src/config.rs`、`model.rs`、`files.rs`、`tui.rs`、`main.rs`、`tmux.rs`、`tests.rs`：配置、有限缓存树与布局、文件操作 / statx / 打开方式、终端界面、CLI、tmux 右侧 pane 路由、Rust 测试。
-- `filex/gui.py`：Qt GUI 主窗口与画布，`filex --gui` 启动；`filex/layout.py` 负责两种树布局。
+- `src/config.rs`、`model.rs`、`files.rs`、`tui.rs`、`main.rs`、`tmux.rs`、`input.rs`、`tests.rs`：配置、有限缓存树与布局、文件操作 / statx / 打开方式、终端界面、CLI、tmux 右侧 pane 路由、英文输入法恢复、Rust 测试。
+- `filex/gui.py`：Qt GUI 主窗口与画布，`filex --gui` 启动；`filex/layout.py` 负责横向树布局。
 - `filex/`：保留的 Python GUI 与对应模型 / 配置 / 操作，`details.py` 和 `opening.py` 提供元数据与可配置启动器。原 Python TUI 为历史兼容实现，默认启动器已使用 Rust。
 - `filex.sh`：保留调用者工作目录，默认 exec Rust release 程序，--gui exec 现有 Qt GUI。缺少 release 时自动编译。
 - `scripts/build.sh`、`measure_memory.py`：更新 release 程序、验证应用内存。
@@ -88,7 +98,7 @@ QT_QPA_PLATFORM=wayland python tests/wayland_smoke.py
 
 ## 验证与后续 GUI 目标
 
-Rust 14 项单元检查与 31 项集成 / GUI 回归检查通过。实际 Nano 通过真实 PTY 打开 / Ctrl+X 返回，f 重新设根后进入文件的完整流程也通过。真实 Rust PTY 检查涵盖文件操作、q Dashboard、Ctrl+F 找到未展开目录中的文件、打开方式选择、当前终端运行编辑器并返回、向上引入根目录、Delete 取消 / 确认 / 实际回收站内容恢复证据和缩小终端后的操作。Rust Clippy 无 warning，release 已构建并接入 filex alias。隔离 tmux server 实测覆盖 alias 当前目录、同级方向键、横纵切换、右侧空闲路由、繁忙回退、输入草稿保留、含引号 / shell 符号的文件名和 resize。实际 Wayland GUI 两种布局已验证，截图为 [preview.png](preview.png) 与 [preview-vertical.png](preview-vertical.png)。
+v1.4 验证涵盖横向同级导航及分支保留、两种重命名键、Ctrl+R / F5、Ctrl+Alt+C 的传统 / CSI-u / tmux 编码、GUI 剪贴板、Python 真实执行与工作目录、Fcitx 英文切换和恢复、Delete 回收站取消 / 确认。Markdown 集成使用相邻真实 toolkit 与真实 Chromium 页面，验证路径加载、HTML 渲染、保存更新、独立预览、Firefox --new-tab 参数和服务空闲退出；另验证 Rust TUI 自动复制路径和启动适配器。Rust 15 项单元检查与 Python 34 项集成 / GUI / CLI 检查（合计 49 项）全部通过，Clippy 无 warning。最终 release 已构建，filex alias 与命令链接均指向当前启动器；本机个人配置与源配置均通过两种实现验证。最终应用进程峰值为 3.781 / 3.822 / 6.324 MB。实际 Wayland 横向 GUI 截图为 [preview.png](preview.png)。
 
 GUI 当前仍使用 Python/PySide6，<50 MB 尚未完成；[GUI 实测基线](gui-memory-baseline.json) 单独记录一个实际 Wayland 窗口的内存。后续需评估 Rust GUI 与原生 Wayland 渲染方案，并在选择库后实测，不能只凭语言迁移保证达标。
 
@@ -335,3 +345,201 @@ python scripts/install_alias.py --remove # 移除本项目的 alias
 ```
 
 保留源码目录，移动后重新安装入口。卸载保留配置和用户文件。默认文件管理器保持原设置。
+
+
+## v1.3 文档存档
+
+以下保留变更前的功能、实现与验证记录；垂直视图及其截图已按用户要求移除。当前操作与配置以上方 v1.4 及 README 为准。
+
+### v1.3 详细说明
+
+#### 当前范围与版本
+
+2026-10-11：在原有文件管理功能基础上增加 q 信息面板、Ctrl+F 递归名称搜索、分支全部展开 / 收起、可配置打开程序和扩展名配色、保留树状态的上级根目录导航。随后按用户要求把默认 TUI 重构为 Rust，保留现有 Python/PySide6 GUI；GUI 的 <50 MB 目标留待单独优化。当前 TUI 的实测目标为应用 release 进程 RSS <15 MB。
+
+#### 导航、布局与 tmux
+
+方向键随布局旋转：横向 ↑/↓ 选择同级、→ 展开 / 进入子级、← 返回父级；纵向 ←/→ 选择同级、↓ 展开 / 进入子级、↑ 返回父级。j/k 仍是同级前后选择，l 仍是展开 / 进入。同级选择只在 parent.children 中移动，越界时停在同级首末项；根节点无兄弟时不移动，已展开目录也不会让同级选择进入后代。返回父级键直接选择父节点，不收起任何分支；在根节点使用它时，将原根节点挂到新父节点下并选中新根，旧分支的节点身份与展开状态保留。h 仅收起选中的目录。f / keys.focus_root 将选中目录（文件时为其父目录）设为根，并重新读取目录；保留该子树展开状态、清空搜索、重置视口。Rust 会释放当前根以外的缓存，之后可用返回父级键重新引入上级目录。旧 parent=u 配置自动迁移为 Left；该配置名称沿用横向基准，纵向的固定父级方向键为 Up。
+
+v / keys.toggle_tree 切换横向与纵向布局，配置 layout.orientation 可设默认 horizontal / vertical；临时切换不自动写回配置。两种界面共用同一节点树，纵向布局为母节点在上、子节点在下并排的树图。自底向上计算各子树宽度，给不同分支预留独立区域；各层间留连接线行，同级子节点左右排列，母节点尽量居于首末子节点的中间，长标签受所在子树范围约束。GUI 提供「纵向树」按钮。TUI 标题与 GUI 窗口标题均为 filex。
+
+Rust TUI 打开 terminal=true 程序时，tmux.open_in_right_pane=true 会检查当前 window 中位于右侧、垂直范围有交集的 pane，优先最近者。仅复用常见 shell（bash/zsh/fish/sh/dash/ksh）的普通屏幕：shell 必须在休眠等待、占有前台进程组且没有子进程；光标行必须是没有输入草稿的常规提示符（末尾 $/#/%/>）。复制模式、程序运行中、有草稿或无法识别的自定义提示符均回退当前终端。pane 状态检查到发送之间仍有极短的竞态窗口；这是对已存在交互 shell 的复用，不创建或终止 pane。
+
+路由通过 tmux send-keys 排队带单引号转义的字面参数，使用 env 和解析后的绝对可执行路径，避免 shell alias / function 和文件名中的命令替换；包含换行或非 UTF-8 参数时回退直接执行。成功后聚焦目标 pane，filex 留在原 pane 并保留树状态。GUI 的终端程序继续使用 Konsole。可用 [tmux] open_in_right_pane=false 关闭路由。
+
+Bash alias 保留；另安装 ~/.local/bin/filex，让 tmux split-window / new-window 和非交互 shell 可以调用，不依赖 alias 展开。启动脚本保持调用者当前目录；现有 ~/.config/tmux/tmux.conf 已将普通方向键传给应用，未改动用户 tmux 配置或活跃会话。
+
+#### Rust TUI 与内存设计
+
+- 不启动 Python 后台进程。Rust + Crossterm 直接处理终端事件和输出；程序无常驻网络服务。
+- 目录读取使用有上限的 top-K heap，不把一个目录的全部条目常驻内存。默认显示 1000 项。
+- 默认最多缓存 6000 个目录 / 文件节点。空间不足时释放已经收起的分支内部缓存；已展开分支不会因普通选择或搜索定位而自动收起。缓存仍满时提示未显示数量，需收起部分分支或调高 `max_loaded_nodes`。引入上级目录需额外的祖先节点。
+- 全部分支展开受 `max_expand_nodes=5000` 的访问预算约束，不跟随符号链接。
+- 搜索流式遍历目录，默认扫描最多 100000 项，保存最多 500 个结果，不受每目录显示上限影响。最多遍历 128 层，跳过不可读目录与链接目标，并提示上限 / 跳过情况。显示隐藏文件开关也控制搜索范围。
+- 搜索定位只打开结果的祖先路径；其他已经展开的分支保持展开。根节点处的 `←` 把已有根节点挂在新父节点下，保留分支并选中新根；`g` 显式换根则重建 Rust 缓存。
+- 预览默认读取最多 65536 bytes，不读取特殊文件。显示区域只绘制可见字符格。
+
+增加缓存、显示、结果数量或预览上限会增加内存使用。测量证明下述工作负载达标，不能将其视为所有配置、任意深度或异常长路径下的绝对上限。
+
+[内存测量记录](memory-validation.json) 使用真实 PTY 的 Linux `/proc/<pid>/status` `VmHWM`，覆盖浏览、全部展开、收起、刷新、Dashboard、搜索、预览和上级根导航。计入 release 应用进程的 resident memory；不计终端、测量脚本、编译器和用户选择打开的外部程序。MB 使用 1000000 bytes，报告也列出 MiB。
+
+首次测量峰值：项目目录 3.469 MB，20000 个文件的单目录 3.809 MB，7200 个文件的多分支目录 6.410 MB。v1.3 测量峰值分别为 3.998 / 3.94 / 6.275 MB，包含纵向布局切换；最终构建的精确数值以 JSON 中的记录为准。
+
+#### 文件信息与打开方式
+
+Rust Dashboard 使用 Linux statx 的 BTIME 和文件元数据；创建时间未提供时显示不可用，不用 ctime 冒充。GUI 使用现有元数据功能，调用 GNU stat 获取真正 birth time。修改时间为 mtime。普通文件显示字节数，目录显示自身元数据大小，符号链接显示链接自身大小，均有标识。
+
+`[openers.NAME]` 定义 label、command 参数列表和 terminal 布尔值，`{path}` 替换完整文件路径，普通直接打开使用参数数组；复用 tmux 空闲 shell 时按上述转义规则发送命令。Enter 显示打开方式菜单，按 `[open_defaults]` 的最长扩展名后缀排序默认项；`o` 直接打开。目录菜单另有 fileX 展开 / 收起选项。TUI 的 terminal=true 程序先尝试 tmux 右侧 pane；在当前终端运行时恢复终端模式，退出后回到原树；GUI 使用 Konsole。已加入 Nano：openers.nano 的 command=["nano", "--", "{path}"]、terminal=true；Enter 菜单可选择，也可在 open_defaults 中把指定后缀映射为 nano。未安装的程序明确提示。
+
+`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 直接发出终端 RGB 颜色，Konsole 已支持；终端自身的颜色能力会影响实际显示。GUI 使用相同颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
+
+#### 文件操作边界
+
+新建、复制不覆盖已有目标。重命名和同设备移动用 Linux renameat2(RENAME_NOREPLACE)。跨设备移动先复制成功，再删除源；中途失败可能留有部分副本，源删除阶段失败可能留有部分源目录。目录复制保留符号链接，不允许复制 / 移动到自身内部；特殊文件拒绝复制，复制目录最多 128 层。Rust 复制普通文件保留权限和访问 / 修改时间，不保证所有 ACL、扩展属性与目录时间元数据。
+
+TUI 的 Delete 键与 D 均调用 gio trash，输入 YES 才移到回收站；Esc 或其他输入取消，不会退回永久删除。根目录的重命名 / 移动 / 删除需先引入其父目录。本机 /tmp 等内部挂载可能拒绝回收站操作，实际错误会显示。恢复在 Dolphin 回收站完成。
+
+#### 配置区段
+
+| 区段 | 可自定义内容 |
+|---|---|
+| browser | show_hidden, directories_first, sort, max_entries, max_expand_nodes, max_loaded_nodes（Rust TUI） |
+| layout | orientation, column_gap, max_label_width, row_spacing |
+| tmux | open_in_right_pane（Rust TUI） |
+| dashboard | dashboard_width（TUI） |
+| search | search_max_results, search_scan_limit |
+| preview | preview_bytes |
+| gui | gui_font_size |
+| colors | GUI 主题、文件夹 / 文件 / 连接线颜色 |
+| extension_colors | 扩展名 → #RRGGBB；两种界面适用 |
+| openers | 程序名称 → label / command / terminal |
+| open_defaults | 扩展名 → 已定义的程序名称 |
+| keys | 单字符 / Ctrl+字母快捷键，parent 支持 Left，toggle_tree 默认 v |
+
+默认个人配置路径是 XDG_CONFIG_HOME/fileX/fileX.conf；源 [fileX.conf](fileX.conf) 给出完整样本。类型、范围、未知区段 / 字段、程序引用、颜色、快捷键重复会被拒绝，重载失败保留旧配置。旧配置 quit=q 且未定义 dashboard 时自动迁移为 quit=Q。Ctrl+F 与 / 固定搜索，Ctrl+L 固定路径输入；导航字符和终端控制组合保留。
+
+#### 文件与维护
+
+- `Cargo.toml` / `Cargo.lock`：Rust 依赖与锁定版本，release 使用 LTO / stripped binary。
+- `src/config.rs`、`model.rs`、`files.rs`、`tui.rs`、`main.rs`、`tmux.rs`、`tests.rs`：配置、有限缓存树与布局、文件操作 / statx / 打开方式、终端界面、CLI、tmux 右侧 pane 路由、Rust 测试。
+- `filex/gui.py`：Qt GUI 主窗口与画布，`filex --gui` 启动；`filex/layout.py` 负责两种树布局。
+- `filex/`：保留的 Python GUI 与对应模型 / 配置 / 操作，`details.py` 和 `opening.py` 提供元数据与可配置启动器。原 Python TUI 为历史兼容实现，默认启动器已使用 Rust。
+- `filex.sh`：保留调用者工作目录，默认 exec Rust release 程序，--gui exec 现有 Qt GUI。缺少 release 时自动编译。
+- `scripts/build.sh`、`measure_memory.py`：更新 release 程序、验证应用内存。
+- `scripts/install_alias.py`：只维护 .bashrc 中本项目的标记区块，拒绝覆盖无关 alias / function；本机已安装 alias。已有 shell 需要 source ~/.bashrc，新交互 shell 自动生效。
+- `scripts/install.sh` / `uninstall.sh`：--command-only 只装用户命令；默认也安装 KDE 菜单入口，alias 单独安装 / 移除。
+- `tests/`：Python GUI 回归、Rust CLI 与真实 PTY 的集成检查、Wayland 窗口截图和 GUI 内存基线。
+
+```bash
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+./scripts/build.sh
+python -m unittest discover -s tests -v
+python scripts/measure_memory.py
+QT_QPA_PLATFORM=wayland python tests/wayland_smoke.py
+```
+
+#### 验证与后续 GUI 目标
+
+Rust 14 项单元检查与 31 项集成 / GUI 回归检查通过。实际 Nano 通过真实 PTY 打开 / Ctrl+X 返回，f 重新设根后进入文件的完整流程也通过。真实 Rust PTY 检查涵盖文件操作、q Dashboard、Ctrl+F 找到未展开目录中的文件、打开方式选择、当前终端运行编辑器并返回、向上引入根目录、Delete 取消 / 确认 / 实际回收站内容恢复证据和缩小终端后的操作。Rust Clippy 无 warning，release 已构建并接入 filex alias。隔离 tmux server 实测覆盖 alias 当前目录、同级方向键、横纵切换、右侧空闲路由、繁忙回退、输入草稿保留、含引号 / shell 符号的文件名和 resize。实际 Wayland GUI 两种布局已验证，截图为 [preview.png](preview.png) 与 `preview-vertical.png`（此旧布局截图随 v1.4 移除）。
+
+GUI 当前仍使用 Python/PySide6，<50 MB 尚未完成；[GUI 实测基线](gui-memory-baseline.json) 单独记录一个实际 Wayland 窗口的内存。后续需评估 Rust GUI 与原生 Wayland 渲染方案，并在选择库后实测，不能只凭语言迁移保证达标。
+
+#### 参考
+
+- [Crossterm 事件](https://docs.rs/crossterm/latest/crossterm/event/index.html)
+- [Linux statx](https://man7.org/linux/man-pages/man2/statx.2.html)
+- [Qt QGraphicsView](https://doc.qt.io/qtforpython-6/PySide6/QtWidgets/QGraphicsView.html)
+
+
+### v1.3 README
+
+#### What is it?
+
+filex 1.3 是面向 Arch Linux / KDE Wayland 的横向 / 纵向树文件管理器。默认 TUI 已用 Rust 重构，母子目录和文件由线连接，支持多分支展开、搜索定位、文件信息和常用文件操作。现有 Qt GUI 保留，通过 `--gui` 启动。
+
+配置、架构、内存测量、限制和历史记录见 [description.md](description.md)。[GUI 预览](preview.png)。
+
+#### How to use
+
+本机已经编译好 TUI，并安装 `filex` Bash alias 和 `~/.local/bin/filex` 命令，可在 tmux 内使用。已有终端先执行一次：
+
+```bash
+source ~/.bashrc
+filex               # 以当前工作目录为根，启动 Rust TUI
+filex ~/Documents   # 指定根目录
+filex --gui         # 以当前工作目录为根，启动现有 Qt GUI
+```
+
+也可直接运行 `./filex.sh`，无须 alias。TUI 首次编译需要 Rust / Cargo；编译后运行不需要 Python。GUI 需要 Python 3.11+ / PySide6，文件打开需要 xdg-utils，回收站需要 glib2 的 gio；GUI 打开终端编辑器需要 Konsole。Arch 缺少依赖时安装：
+
+```bash
+sudo pacman -S rust python pyside6 xdg-utils glib2 konsole
+./scripts/build.sh          # 构建 / 更新 release TUI
+```
+
+启动脚本在缺少 release 程序时自动编译。VSCodium、Vim、Neovim、Nano、Firefox 是可选打开程序，使用前需已安装。
+
+| 默认键 | 操作 |
+|---|---|
+| 横向 `↑/↓`，纵向 `←/→`；或 `k/j` | 只选择同级兄弟节点，跳过展开目录的后代 |
+| 横向 `→`，纵向 `↓`；或 `l` | 展开选中目录；已展开时进入其第一个子节点 |
+| 横向 `←`，纵向 `↑` | 返回父节点；在根节点时引入上级根目录并选中它，保留原树展开状态 |
+| `h` | 只收起选中目录，不移动到父节点 |
+| `v` | 横向 / 纵向树切换：纵向为母节点在上、子节点在下并排；保留树状态 |
+| `f` | 当前 folder 设为根并刷新；光标在文件上时使用其所在 folder，保留新根内的展开状态 |
+| `q` | 切换右侧 Dashboard：创建时间、修改时间、大小；随选中节点更新 |
+| `Ctrl+F` 或 `/` | 递归搜寻根目录下文件 / 目录名，含未展开目录；Enter 定位 |
+| `n`，`N` | 下一个 / 上一个搜索结果，保留其他展开分支 |
+| `.` | 显示 / 隐藏隐藏文件和目录 |
+| `E`，`C` | 展开 / 收起选中目录下的全部分支（受配置上限约束） |
+| `Enter` 或 `w` | 选择打开方式：系统默认、VSCodium、Vim、Neovim、Nano、Firefox 或配置中的程序 |
+| `o` | 直接使用该扩展名的默认打开方式 |
+| `g` / `Ctrl+L` | 输入其他根目录；显式更换根目录时 Rust TUI 重建树缓存 |
+| `p` | 文本预览，Esc 返回 |
+| `a`，`A` | 新建空文件 / 目录，位置为选中目录或文件的父目录 |
+| `R`，`c`，`m` | 重命名、复制、移动 |
+| `Delete` 或 `D` | 移到回收站；输入 `YES` 确认，可在 Dolphin 回收站恢复 |
+| `r`，`,` | 刷新目录、重载配置 |
+| `?`，`Q` | 帮助、退出（小写 q 用于 Dashboard） |
+
+`H/L` 横移，PgUp/PgDn 同级翻页，Home/End 选择首末节点；输入时 Enter 确认、Esc 取消、Ctrl+U 清空。复制 / 移动填写**完整目标路径，包含目标名称**；相对路径以源项目的父目录为基准，不覆盖已有目标，目标父目录必须存在。文件树不自动遍历符号链接。
+
+Enter 选中目录时还可选择在 fileX 展开 / 收起。TUI 的终端编辑器（如 Vim/Neovim/Nano）优先复用同一 tmux window 内右侧空闲 pane，并切换焦点过去；没有合适 pane、pane 繁忙或已有未提交命令时，在当前终端运行，退出后返回原树。GUI 在 Konsole 打开终端编辑器。GUI 单击选择，双击目录展开 / 折叠，双击文件选择打开方式；拖动空白处平移，Ctrl+滚轮缩放，工具栏和右键菜单提供操作。GUI 主程序位于 [filex/gui.py](filex/gui.py)，通过 `filex --gui` 启动。画布焦点下快捷键与 TUI 相同，F5 刷新、F2 重命名、Delete 回收站。
+
+个人配置位于 `~/.config/fileX/fileX.conf`（遵循 XDG_CONFIG_HOME），本机已创建。源码 [fileX.conf](fileX.conf) 是完整样本；用 `--config PATH` 可选择其他配置，缺少个人配置时 `filex --init-config` 创建且不覆盖已有文件。修改后按 `,` 或 GUI「读取配置」。
+
+配置可以定制：隐藏文件、排序、目录显示 / 缓存 / 展开上限、搜索上限、默认横向 / 纵向布局、节点间距、标签宽度、行距、Dashboard 宽度、预览大小、GUI 字号 / 主题、单字符或 Ctrl+字母快捷键、打开程序和参数、扩展名默认打开方式、扩展名颜色，以及 tmux 右侧打开开关。例如：
+
+```toml
+[layout]
+orientation = "horizontal" # 或 "vertical"；v 临时切换
+
+[tmux]
+open_in_right_pane = true
+
+[open_defaults]
+".py" = "vscodium"
+".html" = "firefox"
+
+[extension_colors]
+".py" = "#e5c07b"
+".html" = "#e06c75"
+```
+
+上述配置与已有区段合并编辑，不重复添加同名 TOML 区段。扩展名大小写不敏感，最长后缀优先；`"*"` 为其他文件、`""` 为无扩展名、`"<directory>"` 用于目录打开方式。颜色同时应用于 TUI 和 GUI。创建时间缺失时显示不可用；目录大小为目录本身的元数据大小，不含子文件总量。
+
+安装 / 移除 alias 或可选 KDE 菜单入口：
+
+```bash
+python scripts/install_alias.py          # Bash alias，已在本机完成
+./scripts/install.sh --command-only      # 只安装命令，已在本机完成
+./scripts/install.sh                     # 可选命令与 KDE 菜单入口
+./scripts/uninstall.sh                   # 移除命令与菜单入口
+python scripts/install_alias.py --remove # 移除本项目的 alias
+```
+
+tmux 当前 pane 中直接运行 `filex`，根目录为该 pane 的当前目录；也可运行 `tmux split-window -h -c "#{pane_current_path}" "$HOME/.local/bin/filex"` 在新右侧 pane 启动。现有 tmux 方向键配置无需更改。
+
+保留源码目录，移动后重新安装入口。卸载保留配置和用户文件。默认文件管理器保持原设置。
+

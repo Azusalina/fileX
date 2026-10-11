@@ -227,49 +227,26 @@ fn sibling_arrows_skip_open_descendants_and_back_keeps_expansion() {
 }
 
 #[test]
-fn vertical_tree_and_old_parent_binding_migrate() {
+fn old_config_migrates_to_horizontal_and_new_shortcuts() {
     let fixture = Fixture::new();
     let path = fixture.0.join("settings.conf");
-    fs::write(
-        &path,
-        "[layout]\norientation='vertical'\n[keys]\nparent='u'\n[tmux]\nopen_in_right_pane=false",
-    )
-    .unwrap();
+    fs::write(&path, "[layout]\norientation='vertical'\n[keys]\nparent='u'\ntoggle_tree='v'\nrefresh='r'\nrename='R'\n[tmux]\nopen_in_right_pane=false").unwrap();
     let conf = Config::load(&path).unwrap();
     assert_eq!(conf.action("left"), Some("parent"));
     assert_eq!(conf.action("u"), None);
+    assert_eq!(conf.action("v"), None);
+    assert_eq!(conf.action("r"), Some("rename"));
+    assert_eq!(conf.action("R"), Some("rename"));
+    assert_eq!(conf.action("\x12"), Some("refresh"));
+    assert_eq!(conf.action("ctrl+alt+c"), Some("copy_path"));
     assert!(!conf.tmux_right);
+    assert_eq!(crate::config::key_code("Ctrl+Alt+C"), "ctrl+alt+c");
+    assert_eq!(conf.arrow_action("up"), Some("up"));
     let mut browser = Browser::new(&fixture.0, conf).unwrap();
     browser.expand_all().unwrap();
-    let selected = browser.selected.clone();
     let layout = Layout::new(&browser);
-    let parent = &layout.items[0];
-    let children: Vec<_> = layout
-        .items
-        .iter()
-        .filter(|item| {
-            item.node
-                .borrow()
-                .parent
-                .upgrade()
-                .is_some_and(|node| Rc::ptr_eq(&node, &browser.root))
-        })
-        .collect();
-    assert!(children.iter().all(|child| child.y > parent.y));
-    assert_eq!(children[0].y, children[1].y);
-    assert!(children[0].x < children[1].x);
-    let center = parent.x + unicode_width::UnicodeWidthStr::width(parent.label.as_str()) / 2;
-    let cells = layout.cells(0, 0, layout.width, layout.height);
-    assert!(matches!(
-        cells.get(&(center, children[0].y - 1)),
-        Some('┴' | '┼')
-    ));
-    assert!(layout.plain().contains('┌'));
-    assert!(layout.plain().contains('┐'));
-    browser.conf.orientation = "horizontal".into();
-    let horizontal = Layout::new(&browser);
-    assert_eq!(horizontal.items[0].y, horizontal.items[1].y);
-    assert!(Rc::ptr_eq(&browser.selected, &selected));
+    assert_eq!(layout.items[0].y, layout.items[1].y);
+    assert!(layout.items[1].x > layout.items[0].x);
 }
 
 #[test]
@@ -296,4 +273,25 @@ fn focus_root_keeps_selected_folder_branch_and_uses_files_parent() {
     browser.focus_root();
     assert!(Rc::ptr_eq(&browser.root, &deep));
     assert!(Rc::ptr_eq(&browser.selected, &deep));
+}
+
+#[test]
+fn python_runner_and_extra_extension_colors() {
+    let conf = Config::default();
+    let fixture = Fixture::new();
+    let script = fixture.0.join("script with 空格.py");
+    fs::write(&script, "print('hello')").unwrap();
+    let (command, terminal) = files::open_command(&script, &conf, "python").unwrap();
+    assert!(terminal);
+    assert_eq!(command.get_program(), "python");
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        vec![script.as_os_str()]
+    );
+    assert_eq!(command.get_current_dir(), Some(fixture.0.as_path()));
+    assert_eq!(conf.defaults[".md"], "markdown");
+    assert!(conf.openers["markdown"].copy_path);
+    for extension in [".r", ".cpp", ".sh", ".mp3", ".mp4"] {
+        assert!(conf.extension_colors.contains_key(extension));
+    }
 }

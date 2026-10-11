@@ -22,19 +22,27 @@ class TmuxTests(unittest.TestCase):
             (root / "a-folder").mkdir()
             (root / "a-folder/child.txt").write_text("child")
             (root / "b-folder").mkdir()
+            right_cwd = root / ".right-work"
+            right_cwd.mkdir()
             path = root / "literal ' ; $(touch INJECTED).txt"
             path.write_text("hello")
             records = root / "records.jsonl"
             editor = ("import json,os,sys,time; "
                       f"f=open({str(records)!r},'a'); "
-                      "f.write(json.dumps([os.environ.get('TMUX_PANE'),sys.argv[1]])+'\\n'); "
+                      "f.write(json.dumps([os.environ.get('TMUX_PANE'),sys.argv[1],os.getcwd()])+'\\n'); "
                       "f.close(); print('FILEX-EDITOR'); time.sleep(1.2)")
             config = root / ".settings.conf"
             config.write_text('[openers.fixture]\nlabel="Fixture"\nterminal=true\ncommand=' +
                               json.dumps([sys.executable, "-c", editor, "{path}"]) +
-                              '\n[open_defaults]\n".txt"="fixture"\n')
+                              '\n[input_method]\nauto_english=false\n[open_defaults]\n".txt"="fixture"\n')
             rc = root / ".bashrc"
-            rc.write_text("PS1='filex-test$ '\n")
+            helpers = root / ".bin"
+            helpers.mkdir()
+            clipboard = root / ".clipboard"
+            helper = helpers / "wl-copy"
+            helper.write_text(f"#!{sys.executable}\nimport sys; from pathlib import Path; Path({str(clipboard)!r}).write_bytes(sys.stdin.buffer.read())\n")
+            helper.chmod(0o700)
+            rc.write_text("PS1='filex-test$ '\nexport PATH=" + shlex.quote(str(helpers)) + ":$PATH\n")
             subprocess.run([sys.executable, str(ROOT / "scripts/install_alias.py"), "--rc", str(rc)],
                            check=True, capture_output=True)
             socket = "filex-test-" + uuid.uuid4().hex
@@ -67,7 +75,7 @@ class TmuxTests(unittest.TestCase):
                 source = tmux("-f", "/dev/null", "new-session", "-d", "-s", "fixture", "-x", "180", "-y", "36",
                               "-c", str(root), "-P", "-F", "#{pane_id}",
                               "/usr/bin/bash", "--noprofile", "--rcfile", str(rc), "-i")
-                right = tmux("split-window", "-h", "-t", source, "-c", str(root), "-P", "-F", "#{pane_id}",
+                right = tmux("split-window", "-h", "-t", source, "-c", str(right_cwd), "-P", "-F", "#{pane_id}",
                              "/usr/bin/bash", "--noprofile", "--rcfile", str(rc), "-i")
                 wait(lambda: "filex-test$" in screen(right))
                 send(source, "filex --config " + shlex.quote(str(config)))
@@ -88,42 +96,31 @@ class TmuxTests(unittest.TestCase):
                 tmux("send-keys", "-t", source, "Left")
                 time.sleep(.1)
                 self.assertIn("child.txt", screen(source))  # branch stays open
-                send(source, "v")
-                wait(lambda: "纵向树" in screen(source))
-                tmux("send-keys", "-t", source, "Right")
-                time.sleep(.1)
-                self.assertIn(str(root / "b-folder"), screen(source))
-                tmux("send-keys", "-t", source, "Left", "Down")
-                time.sleep(.1)
-                self.assertIn(str(root / "a-folder/child.txt"), screen(source))
-                tmux("send-keys", "-t", source, "Left", "Right")
-                time.sleep(.1)
-                self.assertIn(str(root / "a-folder/child.txt"), screen(source))
-                tmux("send-keys", "-t", source, "Up")
-                time.sleep(.1)
-                self.assertIn(str(root / "a-folder"), screen(source))
-                self.assertIn("child.txt", screen(source))
                 tmux("send-keys", "-t", source, "C-f")
                 send(source, "literal")
                 tmux("send-keys", "-t", source, "Enter")
                 time.sleep(.15)
+                tmux("send-keys", "-t", source, "M-C-c")
+                wait(lambda: clipboard.exists())
+                self.assertEqual(clipboard.read_text(), str(path))
                 send(source, "o")
                 wait(lambda: len(rows()) == 1)
-                self.assertEqual(rows()[0], [right, str(path)])
+                self.assertEqual(rows()[0], [right, str(path), str(root)])
                 self.assertEqual(tmux("display-message", "-p", "-t", right, "#{pane_active}"), "1")
                 # While the right pane runs the editor, use the current terminal instead.
                 send(source, "o")
                 wait(lambda: len(rows()) == 2)
-                self.assertEqual(rows()[1], [source, str(path)])
+                self.assertEqual(rows()[1], [source, str(path), str(root)])
                 wait(lambda: "filex-test$" in screen(right))
                 time.sleep(1.3)
+                self.assertEqual(tmux("display-message", "-p", "-t", right, "#{pane_current_path}"), str(right_cwd))
                 # A typed but unsubmitted shell command is not an idle pane.
                 draft = "echo FILEX-DRAFT"
                 send(right, draft)
                 wait(lambda: draft in screen(right))
                 send(source, "o")
                 wait(lambda: len(rows()) == 3)
-                self.assertEqual(rows()[2], [source, str(path)])
+                self.assertEqual(rows()[2], [source, str(path), str(root)])
                 self.assertIn(draft, screen(right))
                 self.assertFalse((root / "INJECTED").exists())
                 time.sleep(1.3)

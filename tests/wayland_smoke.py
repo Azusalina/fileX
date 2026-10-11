@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory() as directory:
     root = Path(directory) / "folder(a)"
     (root / "folder(a1)").mkdir(parents=True)
     (root / "folder(a2)").mkdir()
-    (root / "folder(a1)" / "file(a1a).txt").write_text("filex v1.3\nArch Linux · KDE Wayland\n\n←→ 父子导航\n↑↓ 同级选择\nv 横向 / 纵向树\n")
+    (root / "folder(a1)" / "file(a1a).txt").write_text("filex v1.4\nArch Linux · KDE Wayland\n\n←→ 父子导航\n↑↓ 同级选择\nr/R 重命名\nCtrl+Alt+C 复制路径\n")
     for name in ("file(a2a).txt", "file(a2b).txt", "中文文件.txt"):
         (root / "folder(a2)" / name).write_text("示例")
     image = QImage(120, 80, QImage.Format.Format_RGB32)
@@ -38,16 +38,7 @@ with tempfile.TemporaryDirectory() as directory:
         (output.parent / "gui-memory-baseline.json").write_text(json.dumps(baseline, ensure_ascii=False, indent=2) + "\n")
         assert window.grab().save(str(output))
         print(f"platform={app.platformName()} nodes={len(window.rects)} screenshot={output}")
-        selected = browser.selected
-        window.navigate("toggle_tree")
-        assert browser.selected is selected
-        assert all(node.expanded for node in browser.root.children)
-        QTimer.singleShot(250, capture_vertical)
-    def capture_vertical():
-        output = Path(__file__).resolve().parents[1] / "preview-vertical.png"
         assert window.windowTitle() == "filex"
-        assert window.grab().save(str(output))
-        print(f"orientation={browser.config.orientation} nodes={len(window.rects)} screenshot={output}")
         window.close()
     QTimer.singleShot(750, capture)
     app.exec()

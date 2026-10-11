@@ -10,6 +10,8 @@ pub struct Opener {
     pub label: String,
     pub command: Vec<String>,
     pub terminal: bool,
+    pub copy_path: bool,
+    pub pause_on_exit: bool,
 }
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -22,8 +24,8 @@ pub struct Config {
     pub gap: usize,
     pub label_width: usize,
     pub row_spacing: usize,
-    pub orientation: String,
     pub tmux_right: bool,
+    pub auto_english: bool,
     pub preview_bytes: usize,
     pub dashboard_width: usize,
     pub search_results: usize,
@@ -42,6 +44,11 @@ pub fn config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".config"))
         .join("fileX/fileX.conf")
 }
+pub fn product_root() -> PathBuf {
+    env::var_os("FILEX_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+}
 pub fn expand_home(value: &str) -> PathBuf {
     if value == "~" {
         PathBuf::from(env::var_os("HOME").unwrap_or_default())
@@ -52,6 +59,12 @@ pub fn expand_home(value: &str) -> PathBuf {
     }
 }
 pub fn key_code(value: &str) -> String {
+    if value.len() == 10
+        && value.as_bytes()[..9].eq_ignore_ascii_case(b"ctrl+alt+")
+        && value.as_bytes()[9].is_ascii_alphabetic()
+    {
+        return value.to_ascii_lowercase();
+    }
     if value.eq_ignore_ascii_case("Left") {
         return "left".into();
     }
@@ -78,18 +91,18 @@ impl Default for Config {
             ("open_with", "w"),
             ("preview", "p"),
             ("hidden", "."),
-            ("refresh", "r"),
+            ("refresh", "Ctrl+r"),
             ("search", "Ctrl+f"),
             ("next_match", "n"),
             ("previous_match", "N"),
             ("goto", "g"),
             ("parent", "Left"),
-            ("toggle_tree", "v"),
             ("focus_root", "f"),
             ("new_file", "a"),
             ("new_folder", "A"),
-            ("rename", "R"),
+            ("rename", "r"),
             ("copy", "c"),
+            ("copy_path", "Ctrl+Alt+c"),
             ("move", "m"),
             ("trash", "D"),
             ("help", "?"),
@@ -110,6 +123,22 @@ impl Default for Config {
             ("nvim", "Neovim", vec!["nvim", "--", "{path}"], true),
             ("nano", "Nano", vec!["nano", "--", "{path}"], true),
             ("firefox", "Firefox", vec!["firefox", "{path}"], false),
+            ("python", "Python 执行", vec!["python", "{path}"], true),
+            (
+                "markdown",
+                "Toolkit Markdown / Firefox",
+                vec![
+                    "node",
+                    "{filex}/scripts/open_markdown.mjs",
+                    "--toolkit",
+                    "{toolkit}",
+                    "--browser",
+                    "firefox",
+                    "--",
+                    "{path}",
+                ],
+                false,
+            ),
         ]
         .into_iter()
         .map(|(id, label, command, terminal)| {
@@ -119,6 +148,8 @@ impl Default for Config {
                     label: label.into(),
                     command: command.into_iter().map(str::to_string).collect(),
                     terminal,
+                    copy_path: id == "markdown",
+                    pause_on_exit: id == "python",
                 },
             )
         })
@@ -133,8 +164,8 @@ impl Default for Config {
             gap: 6,
             label_width: 32,
             row_spacing: 1,
-            orientation: "horizontal".into(),
             tmux_right: true,
+            auto_english: true,
             preview_bytes: 65536,
             dashboard_width: 36,
             search_results: 500,
@@ -148,6 +179,8 @@ impl Default for Config {
                 (".py", "vscodium"),
                 (".html", "firefox"),
                 (".htm", "firefox"),
+                (".md", "markdown"),
+                (".markdown", "markdown"),
                 ("*", "system"),
             ]
             .into_iter()
@@ -159,6 +192,11 @@ impl Default for Config {
                 (".png", "#c792ea"),
                 (".jpg", "#c792ea"),
                 (".md", "#98c379"),
+                (".r", "#61afef"),
+                (".cpp", "#56b6c2"),
+                (".sh", "#98c379"),
+                (".mp3", "#c792ea"),
+                (".mp4", "#e06c75"),
             ]
             .into_iter()
             .map(|(a, b)| (a.into(), b.into()))
@@ -186,24 +224,16 @@ fn number(value: &Value, key: &str, low: usize, high: usize) -> Result<usize, St
 }
 impl Config {
     pub fn arrow_action(&self, key: &str) -> Option<&'static str> {
-        match (self.orientation.as_str(), key) {
-            ("vertical", "up") => Some("parent"),
-            ("vertical", "down") => Some("expand"),
-            ("vertical", "left") => Some("up"),
-            ("vertical", "right") => Some("down"),
-            (_, "up") => Some("up"),
-            (_, "down") => Some("down"),
-            (_, "left") => Some("parent"),
-            (_, "right") => Some("expand"),
+        match key {
+            "up" => Some("up"),
+            "down" => Some("down"),
+            "left" => Some("parent"),
+            "right" => Some("expand"),
             _ => None,
         }
     }
     pub fn arrow_hint(&self) -> &'static str {
-        if self.orientation == "vertical" {
-            "←→ 同级 ↑ 父级 ↓ 展开"
-        } else {
-            "↑↓ 同级 ← 父级 → 展开"
-        }
+        "↑↓ 同级 ← 父级 → 展开"
     }
     pub fn load(path: &Path) -> Result<Self, String> {
         if !path.exists() {
@@ -227,6 +257,7 @@ impl Config {
                 "open_defaults",
                 "extension_colors",
                 "tmux",
+                "input_method",
             ]
             .contains(&section.as_str())
             {
@@ -261,11 +292,10 @@ impl Config {
                         conf.label_width = number(value, key, 12, 120)?
                     }
                     ("layout", "row_spacing") => conf.row_spacing = number(value, key, 1, 4)?,
-                    ("layout", "orientation") => {
-                        conf.orientation = string(value, key)?;
-                        if !["horizontal", "vertical"].contains(&conf.orientation.as_str()) {
-                            return Err("orientation 应为 horizontal / vertical".into());
-                        }
+                    // Ignore retired options so existing user configurations still load.
+                    ("layout", "orientation") | ("keys", "toggle_tree") => {}
+                    ("input_method", "auto_english") => {
+                        conf.auto_english = value.as_bool().ok_or("auto_english 应为布尔值")?;
                     }
                     ("tmux", "open_in_right_pane") => {
                         conf.tmux_right = value.as_bool().ok_or("open_in_right_pane 应为布尔值")?;
@@ -321,12 +351,21 @@ impl Config {
                             label: key.clone(),
                             command: vec![],
                             terminal: false,
+                            copy_path: false,
+                            pause_on_exit: false,
                         });
                         for (field, v) in item {
                             match field.as_str() {
                                 "label" => opener.label = string(v, field)?,
                                 "terminal" => {
                                     opener.terminal = v.as_bool().ok_or("terminal 应为布尔值")?
+                                }
+                                "pause_on_exit" => {
+                                    opener.pause_on_exit =
+                                        v.as_bool().ok_or("pause_on_exit 应为布尔值")?;
+                                }
+                                "copy_path" => {
+                                    opener.copy_path = v.as_bool().ok_or("copy_path 应为布尔值")?;
                                 }
                                 "command" => {
                                     opener.command = v
@@ -382,13 +421,22 @@ impl Config {
         {
             conf.keys.insert("quit".into(), "Q".into());
         }
+        if conf.keys.get("refresh").map(String::as_str) == Some("r") {
+            conf.keys.insert("refresh".into(), "Ctrl+r".into());
+        }
+        if conf.keys.get("rename").map(String::as_str) == Some("R") {
+            conf.keys.insert("rename".into(), "r".into());
+        }
         let mut used = std::collections::HashSet::new();
         if conf.keys.get("parent").map(String::as_str) == Some("u") {
             conf.keys.insert("parent".into(), "Left".into());
         }
         for (action, key) in &conf.keys {
             let code = key_code(key);
-            if (code.chars().count() != 1 && !(action == "parent" && code == "left"))
+            let ctrl_alt = code.len() == 10
+                && code.starts_with("ctrl+alt+")
+                && code.as_bytes()[9].is_ascii_alphabetic();
+            if (code.chars().count() != 1 && !(action == "parent" && code == "left") && !ctrl_alt)
                 || (code == *key && key.chars().any(char::is_control))
                 || [
                     "\n", "\r", "\t", " ", "\x1b", "\x03", "\x15", "\x13", "\x11", "\x1a", "H",
@@ -401,8 +449,13 @@ impl Config {
             if ["\x06", "/"].contains(&code.as_str()) && action != "search"
                 || code == "\x0c" && action != "goto"
                 || code == "left" && action != "parent"
+                || code == "R" && action != "rename"
+                || code == "ctrl+alt+c" && action != "copy_path"
             {
-                return Err("Ctrl+F / Ctrl+L 保留给搜索 / 路径".into());
+                return Err(
+                    "Ctrl+F / Ctrl+L / Shift+R / Ctrl+Alt+C 保留给搜索 / 路径 / 重命名 / 复制路径"
+                        .into(),
+                );
             }
             if !used.insert(code) {
                 return Err("快捷键冲突".into());
@@ -416,6 +469,12 @@ impl Config {
         Ok(conf)
     }
     pub fn action(&self, key: &str) -> Option<&str> {
+        if key == "R" {
+            return Some("rename");
+        }
+        if key == "ctrl+alt+c" {
+            return Some("copy_path");
+        }
         self.keys
             .iter()
             .find(|(_, v)| key_code(v) == key)

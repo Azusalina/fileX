@@ -49,7 +49,12 @@ fn read_key() -> Result<String, String> {
                     KeyCode::Char(c) => {
                         if key.modifiers.contains(KeyModifiers::CONTROL) && c.is_ascii_alphabetic()
                         {
-                            key_code(&format!("Ctrl+{c}"))
+                            let prefix = if key.modifiers.contains(KeyModifiers::ALT) {
+                                "Ctrl+Alt"
+                            } else {
+                                "Ctrl"
+                            };
+                            key_code(&format!("{prefix}+{c}"))
                         } else {
                             c.to_string()
                         }
@@ -58,6 +63,7 @@ fn read_key() -> Result<String, String> {
                     KeyCode::Esc => "escape".into(),
                     KeyCode::Backspace => "backspace".into(),
                     KeyCode::Delete => "delete".into(),
+                    KeyCode::F(5) => "f5".into(),
                     KeyCode::Up => "up".into(),
                     KeyCode::Down => "down".into(),
                     KeyCode::Left => "left".into(),
@@ -279,11 +285,10 @@ impl Ui {
             h - 1,
             1,
             &format!(
-                "{} {}收起 {}设根 {}转向 Enter打开 {}信息 Ctrl+F搜索 Del回收站 {}退出 ?帮助",
+                "{} {}收起 {}重命名 Ctrl+Alt+C路径 Enter打开 {}信息 {}退出 ?帮助",
                 self.browser.conf.arrow_hint(),
                 self.browser.conf.keys["collapse"],
-                self.browser.conf.keys["focus_root"],
-                self.browser.conf.keys["toggle_tree"],
+                self.browser.conf.keys["rename"],
                 self.browser.conf.keys["dashboard"],
                 self.browser.conf.keys["quit"]
             ),
@@ -445,7 +450,23 @@ impl Ui {
                 LeaveAlternateScreen
             )
             .map_err(ioerr)?;
-            let result = command.status().map_err(ioerr);
+            let mut result = command.status().map_err(ioerr);
+            if self.browser.conf.openers[method].pause_on_exit
+                && let Ok(status) = &result
+            {
+                println!("\n程序结束 ({status}) · 按 Enter 返回 filex");
+                terminal::enable_raw_mode().map_err(ioerr)?;
+                loop {
+                    match read_key() {
+                        Ok(key) if ["enter", "escape", "\x03"].contains(&key.as_str()) => break,
+                        Ok(_) => {}
+                        Err(error) => {
+                            result = Err(error);
+                            break;
+                        }
+                    }
+                }
+            }
             terminal::enable_raw_mode().map_err(ioerr)?;
             execute!(io::stdout(), EnterAlternateScreen, Hide).map_err(ioerr)?;
             result?;
@@ -598,6 +619,7 @@ impl Ui {
                 " " => "expand",
                 "enter" => "open_with",
                 "delete" => "trash",
+                "f5" => "refresh",
                 "\x06" | "/" => "search",
                 "\x0c" => "goto",
                 _ => self.browser.conf.action(key).unwrap_or(""),
@@ -627,21 +649,6 @@ impl Ui {
                 self.left = 0;
                 self.top = 0
             }
-            "toggle_tree" => {
-                self.browser.conf.orientation = if self.browser.conf.orientation == "horizontal" {
-                    "vertical".into()
-                } else {
-                    "horizontal".into()
-                };
-                self.left = 0;
-                self.top = 0;
-                self.message = if self.browser.conf.orientation == "vertical" {
-                    "纵向树"
-                } else {
-                    "横向树"
-                }
-                .into();
-            }
             "focus_root" => {
                 self.message = self.browser.focus_root();
                 self.query.clear();
@@ -652,6 +659,10 @@ impl Ui {
             "hidden" => {
                 self.browser.conf.hidden = !self.browser.conf.hidden;
                 self.browser.refresh()
+            }
+            "copy_path" => {
+                files::copy_path(&self.browser.selected.borrow().path)?;
+                self.message = "已复制绝对路径".into();
             }
             "refresh" => {
                 self.browser.refresh();
@@ -725,20 +736,10 @@ impl Ui {
                     .conf
                     .keys
                     .iter()
-                    .map(|(action, key)| {
-                        let shown = if action == "parent"
-                            && key_code(key) == "left"
-                            && self.browser.conf.orientation == "vertical"
-                        {
-                            "Up"
-                        } else {
-                            key.as_str()
-                        };
-                        format!("{shown:8} {action}")
-                    })
+                    .map(|(action, key)| format!("{key:12} {action}"))
                     .collect::<Vec<_>>()
                     .join("\n");
-                text.push_str("\n\n横向：↑↓ 同级 · → 展开 / 进入子级 · ← 返回父级\n纵向：←→ 同级 · ↓ 展开 / 进入子级 · ↑ 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · v 横向 / 纵向树\nf 当前目录设为根并刷新\nEnter 选择打开方式 · o 扩展名默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，输入 YES 确认\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\n复制 / 移动填写完整目标路径，不覆盖已有目标。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
+                text.push_str("\n\n横向：↑↓ 同级 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起\nr / Shift+R 重命名 · Ctrl+R / F5 刷新\nCtrl+Alt+C 复制选中项目的绝对路径\nf 当前目录设为根并刷新\nEnter 选择打开方式 · o 扩展名默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，输入 YES 确认\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\n复制 / 移动填写完整目标路径，不覆盖已有目标。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
                 self.pager("filex 快捷键", &text)?
             }
             _ => match key {
@@ -770,6 +771,7 @@ impl Ui {
     }
 }
 pub fn run(browser: Browser, path: PathBuf) -> Result<(), String> {
+    let _input = crate::input::EnglishGuard::new(browser.conf.auto_english);
     let _guard = Guard::new()?;
     let mut ui = Ui {
         browser,

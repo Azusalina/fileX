@@ -40,7 +40,7 @@ class TreeView(QGraphicsView):
 
     def __init__(self):
         super().__init__()
-        self.arrow_actions = navigation_keys("horizontal")
+        self.arrow_actions = navigation_keys()
         self.setScene(QGraphicsScene(self))
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
@@ -140,16 +140,13 @@ class Window(QMainWindow):
         toolbar.setMovable(False)
         self.toolbar = toolbar
         for label, action in [("展开", "expand"), ("折叠", "collapse"), ("全部展开", "expand_all"), ("全部收起", "collapse_all"), ("信息", "dashboard"), ("新文件", "new_file"),
-                              ("新目录", "new_folder"), ("重命名", "rename"), ("复制", "copy"),
+                              ("新目录", "new_folder"), ("重命名", "rename"), ("复制", "copy"), ("复制路径", "copy_path"),
                               ("移动", "move"), ("回收站", "trash"), ("刷新", "refresh")]:
             item = toolbar.addAction(label)
             item.triggered.connect(lambda checked=False, a=action: self.navigate(a))
         self.hidden_action = toolbar.addAction("隐藏文件")
         self.hidden_action.setCheckable(True)
         self.hidden_action.triggered.connect(lambda: self.navigate("hidden"))
-        self.orientation_action = toolbar.addAction("纵向树")
-        self.orientation_action.setCheckable(True)
-        self.orientation_action.triggered.connect(lambda: self.navigate("toggle_tree"))
         toolbar.addSeparator()
         toolbar.addAction("读取配置", lambda: self.navigate("config"))
         toolbar.addAction("适应画布", lambda: self.view.fitInView(self.view.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio))
@@ -206,14 +203,13 @@ class Window(QMainWindow):
             action.deleteLater()
         self.binding_actions.clear()
         for name, key in c.keys.items():
-            if len(key_code(key)) == 1 and not key_code(key).isprintable() and key_code(key) not in {"\x06", "\x0c"}:
+            if key.lower().startswith("ctrl+") and key_code(key) not in {"\x06", "\x0c"}:
                 action = QAction(self)
                 action.setShortcut(QKeySequence(key))
                 action.triggered.connect(lambda checked=False, n=name: self.navigate(n))
                 self.addAction(action)
                 self.binding_actions.append(action)
         self.hidden_action.setChecked(c.show_hidden)
-        self.orientation_action.setChecked(c.orientation == "vertical")
 
     def execute(self, operation, on_done=None):
         if self.busy:
@@ -242,9 +238,8 @@ class Window(QMainWindow):
 
     def render(self, center=True):
         c = self.browser.config
-        self.view.arrow_actions = navigation_keys(c.orientation)
-        self.parent_button.setText("↑ 父级" if c.orientation == "vertical" else "← 父级")
-        self.hint.setText(f"{navigation_hint(c.orientation)} · {c.keys['collapse']} 收起当前目录 · {c.keys['toggle_tree']} 横向/纵向 · Enter 打开方式 · {c.keys['dashboard']} 信息")
+        self.view.arrow_actions = navigation_keys()
+        self.hint.setText(f"{navigation_hint()} · {c.keys['collapse']} 收起当前目录 · r/R 重命名 · Ctrl+Alt+C 复制路径 · Enter 打开方式 · {c.keys['dashboard']} 信息")
         layout = Layout(self.browser)
         scene = self.view.scene()
         scene.clear()
@@ -362,7 +357,7 @@ class Window(QMainWindow):
         self.select(node)
         menu = QMenu(self)
         for label, action in [("选择打开方式", "open_with"), ("默认程序打开", "open"), ("全部展开", "expand_all"), ("全部收起", "collapse_all"), ("文件信息", "dashboard"), ("新建文件", "new_file"), ("新建目录", "new_folder"),
-                              ("重命名", "rename"), ("复制", "copy"), ("移动", "move"), ("送入回收站", "trash")]:
+                              ("重命名", "rename"), ("复制", "copy"), ("复制路径", "copy_path"), ("移动", "move"), ("送入回收站", "trash")]:
             menu.addAction(label, lambda a=action: self.navigate(a))
         menu.exec(point)
 
@@ -398,10 +393,6 @@ class Window(QMainWindow):
             self.execute(self.browser.back)
         elif action == "focus_root":
             self.execute(self.browser.focus_root, lambda result: self.search.clear())
-        elif action == "toggle_tree":
-            self.browser.config.orientation = "vertical" if self.browser.config.orientation == "horizontal" else "horizontal"
-            self.orientation_action.setChecked(self.browser.config.orientation == "vertical")
-            self.render()
         elif action == "goto":
             self.path.setFocus()
             self.path.selectAll()
@@ -415,6 +406,9 @@ class Window(QMainWindow):
             self.next_match(1 if action == "next_match" else -1)
         elif action == "hidden":
             self.execute(self.browser.toggle_hidden)
+        elif action == "copy_path":
+            QApplication.clipboard().setText(str(self.browser.selected.path.absolute()))
+            self.statusBar().showMessage("已复制绝对路径", 8000)
         elif action == "refresh":
             self.execute(self.browser.refresh)
         elif action in ARG_LABELS:
@@ -437,8 +431,8 @@ class Window(QMainWindow):
                 self.browser.refresh()
             self.execute(reload)
         elif action == "help":
-            lines = "\n".join(f"{'Up' if name == 'parent' and key_code(key) == 'left' and self.browser.config.orientation == 'vertical' else key}  {name}" for name, key in self.browser.config.keys.items())
-            QMessageBox.information(self, "fileX 使用帮助", "键盘焦点在画布时，可使用与 TUI 相同的快捷键。\n\n" + lines + "\n\nEnter 选择打开方式 · o 扩展名默认程序\nCtrl+L 路径 · Ctrl+F 递归搜寻 · F5 刷新\nF2 重命名 · Delete 回收站\n复制 / 移动填写完整目标路径；不会覆盖。\n扩展名配色同时用于 TUI / GUI；逗号重新读取配置。")
+            lines = "\n".join(f"{key}  {name}" for name, key in self.browser.config.keys.items())
+            QMessageBox.information(self, "fileX 使用帮助", "键盘焦点在画布时，可使用与 TUI 相同的快捷键。\n\n" + lines + "\n\nEnter 选择打开方式 · o 扩展名默认程序\nCtrl+L 路径 · Ctrl+F 递归搜寻 · Ctrl+R / F5 刷新\nr / Shift+R / F2 重命名 · Delete 回收站\nCtrl+Alt+C 复制绝对路径\n复制 / 移动填写完整目标路径；不会覆盖。\n扩展名配色同时用于 TUI / GUI；逗号重新读取配置。")
 
     def closeEvent(self, event):
         if self.busy:

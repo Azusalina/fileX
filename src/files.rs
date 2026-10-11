@@ -1,11 +1,11 @@
 use crate::{
-    config::{Config, expand_home},
+    config::{Config, expand_home, product_root},
     model::clean,
 };
 use std::{
     ffi::CString,
     fs::{self, File, FileTimes, OpenOptions},
-    io::{self, Read},
+    io::{self, Read, Write},
     os::unix::{
         ffi::OsStrExt,
         fs::{MetadataExt, symlink},
@@ -302,18 +302,59 @@ pub fn available(command: &str) -> bool {
 }
 pub fn open_command(path: &Path, conf: &Config, method: &str) -> Result<(Command, bool), String> {
     let opener = conf.openers.get(method).ok_or("打开程序未定义")?;
+    let root = product_root();
+    let toolkit = root.parent().unwrap_or(&root).join("toolkit");
     let args = opener
         .command
         .iter()
-        .map(|s| s.replace("{path}", &path.to_string_lossy()))
+        .map(|s| {
+            s.replace("{filex}", &root.to_string_lossy())
+                .replace("{toolkit}", &toolkit.to_string_lossy())
+                .replace("{path}", &path.to_string_lossy())
+        })
         .collect::<Vec<_>>();
     if !available(&args[0]) {
         return Err(format!("程序未安装: {}", args[0]));
     }
     let mut command = Command::new(&args[0]);
     command.args(&args[1..]);
+    if opener.terminal {
+        command.current_dir(if path.is_dir() {
+            path
+        } else {
+            path.parent().unwrap_or(Path::new("."))
+        });
+    }
+    if opener.copy_path {
+        copy_path(path)?;
+    }
     if !opener.terminal {
         command.stdout(Stdio::null()).stderr(Stdio::null());
     }
     Ok((command, opener.terminal))
+}
+
+/// Send the selected pathname as text without resolving a symlink or adding a newline.
+pub fn copy_path(path: &Path) -> Result<(), String> {
+    let absolute = std::path::absolute(path).map_err(err)?;
+    let mut child = Command::new("wl-copy")
+        .args(["--type", "text/plain;charset=utf-8"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("复制路径需要 wl-clipboard / Wayland: {e}"))?;
+    let written = child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(absolute.as_os_str().as_bytes());
+    let output = child.wait_with_output().map_err(err)?;
+    if !output.status.success() {
+        return Err(format!(
+            "复制路径失败: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    written.map_err(err)
 }

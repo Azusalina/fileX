@@ -104,7 +104,7 @@ class GuiTests(unittest.TestCase):
         self.wait()
         self.assertFalse(original.expanded)
 
-    def test_arrow_siblings_and_vertical_toggle_preserve_open_branches(self):
+    def test_horizontal_arrows_preserve_open_branches(self):
         from PySide6.QtTest import QTest
         from PySide6.QtCore import Qt
         (self.root / "末尾目录").mkdir()
@@ -127,26 +127,8 @@ class GuiTests(unittest.TestCase):
         self.wait()
         self.assertIs(self.browser.selected, folder)
         self.assertTrue(folder.expanded)
-        QTest.keyClick(self.window.view, Qt.Key.Key_V)
-        self.assertEqual(self.browser.config.orientation, "vertical")
-        self.assertTrue(folder.expanded)
         self.assertEqual(self.window.windowTitle(), "filex")
-        self.assertTrue(self.window.orientation_action.isChecked())
-        QTest.keyClick(self.window.view, Qt.Key.Key_Right)
-        self.assertEqual(self.browser.selected.path.name, "末尾目录")
-        QTest.keyClick(self.window.view, Qt.Key.Key_Left)
-        self.assertIs(self.browser.selected, folder)
-        QTest.keyClick(self.window.view, Qt.Key.Key_Down)
-        self.wait()
-        self.assertEqual(self.browser.selected.path.name, "file.txt")
-        QTest.keyClick(self.window.view, Qt.Key.Key_Right)
-        self.assertEqual(self.browser.selected.path.name, "file.txt")
-        QTest.keyClick(self.window.view, Qt.Key.Key_Up)
-        self.wait()
-        self.assertIs(self.browser.selected, folder)
-        self.assertTrue(folder.expanded)
-        QTest.keyClick(self.window.view, Qt.Key.Key_V)
-        self.assertEqual(self.browser.config.orientation, "horizontal")
+        self.assertFalse(any(action.text() == "纵向树" for action in self.window.toolbar.actions()))
         other = next(child for child in self.browser.root.children if child is not folder)
         QTest.keyClick(self.window.view, Qt.Key.Key_H)
         self.assertFalse(folder.expanded)
@@ -177,6 +159,12 @@ class GuiTests(unittest.TestCase):
                 self.window.navigate("open_with")
             self.assertEqual(launch.call_args.args[2], "vim")
             self.assertTrue(launch.call_args.kwargs["gui"])
+        from filex.opening import launch_open
+        with patch("filex.opening.subprocess.Popen") as process:
+            launch_open(self.root / "中文目录/script.py", self.browser.config, "python", gui=True)
+            command = process.call_args.args[0]
+            self.assertEqual(command[1:], ["--hold", "-e", "python", str(self.root / "中文目录/script.py")])
+            self.assertEqual(process.call_args.kwargs["cwd"], self.root / "中文目录")
 
     def test_invalid_reload_preserves_config(self):
         path = self.root / "invalid.conf"
@@ -190,6 +178,30 @@ class GuiTests(unittest.TestCase):
             self.wait()
             warning.assert_called_once()
         self.assertIs(self.browser.config, old)
+
+    def test_copy_absolute_path_and_both_rename_keys(self):
+        from unittest.mock import patch
+        from PySide6.QtTest import QTest
+        from PySide6.QtCore import Qt
+        self.window.navigate("expand_all")
+        self.wait()
+        folder = self.browser.root.children[0]
+        self.browser.selected = folder.children[0]
+        self.window.render()
+        self.window.view.setFocus()
+        QTest.keyClick(self.window.view, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
+        self.app.processEvents()
+        self.assertEqual(self.app.clipboard().text(), str(folder.path / "file.txt"))
+        self.assertTrue(folder.expanded)
+        for modifiers, target in [(Qt.KeyboardModifier.NoModifier, "renamed.txt"), (Qt.KeyboardModifier.ShiftModifier, "shift renamed.txt")]:
+            with patch("filex.gui.QInputDialog.getText", return_value=(target, True)):
+                QTest.keyClick(self.window.view, Qt.Key.Key_R, modifiers)
+            self.wait()
+            self.assertTrue((folder.path / target).exists())
+        self.assertFalse((folder.path / "file.txt").exists())
+        QTest.keyClick(self.window.view, Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier)
+        self.wait()
+        self.assertEqual(self.browser.selected.path.name, "shift renamed.txt")
 
 
 if __name__ == "__main__":

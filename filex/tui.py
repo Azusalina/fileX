@@ -120,7 +120,7 @@ class Terminal:
         detail = node.error or (f"还有 {node.omitted} 项未显示；调高 max_entries 后刷新" if node.omitted else str(node.path))
         self.put(height - 2, 1, self.message or detail)
         keys = self.browser.config.keys
-        self.put(height - 1, 1, f"{navigation_hint(self.browser.config.orientation)}  {keys['collapse']} 收起  {keys['focus_root']} 设根  {keys['toggle_tree']} 横/纵  Enter 打开  {keys['dashboard']} 信息  Ctrl+F 搜索  Delete 回收站  {keys['quit']} 退出", curses.A_DIM)
+        self.put(height - 1, 1, f"{navigation_hint()}  {keys['collapse']} 收起  {keys['focus_root']} 设根  Enter 打开  {keys['dashboard']} 信息  Ctrl+F 搜索  Delete 回收站  {keys['quit']} 退出", curses.A_DIM)
         self.screen.refresh()
 
     def prompt(self, label, initial=""):
@@ -214,7 +214,9 @@ class Terminal:
             curses.def_prog_mode()
             curses.endwin()
             try:
-                subprocess.run(command, check=False)
+                result = subprocess.run(command, check=False, cwd=path if path.is_dir() else path.parent)
+                if self.browser.config.openers[method].get("pause_on_exit", False):
+                    input(f"程序结束 ({result.returncode}) · 按 Enter 返回 filex")
             finally:
                 curses.reset_prog_mode()
                 curses.curs_set(0)
@@ -247,17 +249,31 @@ class Terminal:
             if key == curses.KEY_RESIZE:
                 self.focus = True
                 continue
+            if key == "\x1b":
+                self.screen.timeout(35)
+                try:
+                    following = self.screen.get_wch()
+                    if isinstance(following, str) and len(following) == 1 and "\x01" <= following <= "\x1a":
+                        key = "ctrl+alt+" + chr(ord(following) + ord("a") - 1)
+                    else:
+                        curses.unget_wch(following)
+                except curses.error:
+                    pass
+                finally:
+                    self.screen.timeout(-1)
             keys = key_map(self.browser.config)
             action = keys.get(key, "") if isinstance(key, str) else ""
             if key in ("\x06", "/"):
                 action = "search"
             elif key == "\x0c":
                 action = "goto"
+            elif key == curses.KEY_F5:
+                action = "refresh"
             elif key == curses.KEY_DC:
                 action = "trash"
             elif key in (curses.KEY_UP, curses.KEY_DOWN, curses.KEY_LEFT, curses.KEY_RIGHT):
                 names = {curses.KEY_UP: "up", curses.KEY_DOWN: "down", curses.KEY_LEFT: "left", curses.KEY_RIGHT: "right"}
-                action = navigation_keys(self.browser.config.orientation)[names[key]]
+                action = navigation_keys()[names[key]]
             if key == "\x1b":
                 self.query = self.message = ""
                 continue
@@ -308,9 +324,6 @@ class Terminal:
                 elif action == "parent":
                     self.message = self.browser.back()
                     self.left = self.top = 0
-                elif action == "toggle_tree":
-                    self.browser.config.orientation = "vertical" if self.browser.config.orientation == "horizontal" else "horizontal"
-                    self.left = self.top = 0
                 elif action == "focus_root":
                     self.message = self.browser.focus_root()
                     self.query = ""
@@ -323,6 +336,10 @@ class Terminal:
                         self.left = self.top = 0
                 elif action == "hidden":
                     self.browser.toggle_hidden()
+                elif action == "copy_path":
+                    from .clipboard import copy_path
+                    copy_path(self.browser.selected.path)
+                    self.message = "已复制绝对路径"
                 elif action == "refresh":
                     self.browser.refresh()
                     self.metadata_path = None
@@ -351,7 +368,7 @@ class Terminal:
                     self.metadata_path = None
                     self.message = f"配置已重新读取: {path}"
                 elif action == "help":
-                    entries = {"quit": "退出", "dashboard": "右侧创建 / 修改时间 / 大小", "expand": "展开 / 进入子节点", "collapse": "只收起选中目录", "expand_all": "展开选中目录全部分支", "collapse_all": "收起选中目录全部分支", "down": "下一个同级节点", "up": "上一个同级节点", "open": "按扩展名默认程序打开", "open_with": "选择打开程序（也可 Enter）", "preview": "文本预览", "hidden": "隐藏文件开关", "refresh": "刷新", "search": "递归搜索文件 / 目录名", "next_match": "下一个匹配", "previous_match": "上一个匹配", "goto": "更换根目录", "parent": "返回父级 / 引入上级根目录", "toggle_tree": "横向 / 纵向树", "focus_root": "当前目录设为根并刷新", "new_file": "新建文件", "new_folder": "新建目录", "rename": "重命名", "copy": "复制", "move": "移动", "trash": "送入回收站（确认）", "help": "帮助", "config": "重新读取配置"}
+                    entries = {"quit": "退出", "dashboard": "右侧创建 / 修改时间 / 大小", "expand": "展开 / 进入子节点", "collapse": "只收起选中目录", "expand_all": "展开选中目录全部分支", "collapse_all": "收起选中目录全部分支", "down": "下一个同级节点", "up": "上一个同级节点", "open": "按扩展名默认程序打开", "open_with": "选择打开程序（也可 Enter）", "preview": "文本预览", "hidden": "隐藏文件开关", "refresh": "刷新", "search": "递归搜索文件 / 目录名", "next_match": "下一个匹配", "previous_match": "上一个匹配", "goto": "更换根目录", "parent": "返回父级 / 引入上级根目录", "focus_root": "当前目录设为根并刷新", "new_file": "新建文件", "new_folder": "新建目录", "rename": "重命名", "copy": "复制", "copy_path": "复制绝对路径", "move": "移动", "trash": "送入回收站（确认）", "help": "帮助", "config": "重新读取配置"}
                     self.pager("fileX 快捷键", "\n".join(f"{self.browser.config.keys[a]}    {label}" for a, label in entries.items()) + "\n\nCtrl+F / /    搜索\nEnter    选择打开程序\nH / L    横向平移\nPgUp / PgDn    翻页\nHome / End    首末节点\nEsc    取消输入 / 清除搜索\nCtrl+U    清空输入\n\n复制 / 移动填写完整目标路径，不会覆盖已有目标。\n扩展名配色同时用于 TUI / GUI，终端会近似为可用颜色。")
             except (OSError, ValueError, RuntimeError) as exc:
                 self.message = f"操作失败: {safe_text(exc)}"
@@ -361,4 +378,6 @@ class Terminal:
 
 def run(browser, config_file=None):
     os.environ.setdefault("ESCDELAY", "25")
-    curses.wrapper(lambda screen: Terminal(screen, browser, config_file).run())
+    from .input_method import english
+    with english(browser.config.auto_english):
+        curses.wrapper(lambda screen: Terminal(screen, browser, config_file).run())

@@ -1,5 +1,6 @@
 mod config;
 mod files;
+mod input;
 mod model;
 mod tmux;
 mod tui;
@@ -29,7 +30,7 @@ fn run() -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "filex\nfilex [目录] [--config PATH] [--print-tree] [--init-config]\nfilex --gui [目录]\n默认当前工作目录；q 信息 / Q 退出 / Ctrl+F 搜索 / Enter 打开方式 / v 切换树方向"
+                    "filex\nfilex [目录] [--config PATH] [--print-tree] [--init-config]\nfilex --gui [目录]\n默认当前工作目录；q 信息 / Q 退出 / Ctrl+F 搜索 / Enter 打开方式 / r 重命名 / Ctrl+Alt+C 复制路径"
                 );
                 return Ok(());
             }

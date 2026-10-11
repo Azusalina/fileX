@@ -8,9 +8,9 @@ import tomllib
 DEFAULT_KEYS = {
     "quit": "Q", "dashboard": "q", "expand": "l", "collapse": "h", "down": "j", "up": "k",
     "expand_all": "E", "collapse_all": "C", "open": "o", "open_with": "w",
-    "preview": "p", "hidden": ".", "refresh": "r", "search": "Ctrl+f",
-    "next_match": "n", "previous_match": "N", "goto": "g", "parent": "Left", "toggle_tree": "v", "focus_root": "f",
-    "new_file": "a", "new_folder": "A", "rename": "R", "copy": "c",
+    "preview": "p", "hidden": ".", "refresh": "Ctrl+r", "search": "Ctrl+f",
+    "next_match": "n", "previous_match": "N", "goto": "g", "parent": "Left", "focus_root": "f",
+    "new_file": "a", "new_folder": "A", "rename": "r", "copy": "c", "copy_path": "Ctrl+Alt+c",
     "move": "m", "trash": "D", "help": "?", "config": ",",
 }
 DEFAULT_OPENERS = {
@@ -20,6 +20,8 @@ DEFAULT_OPENERS = {
     "nvim": {"label": "Neovim", "command": ["nvim", "--", "{path}"], "terminal": True},
     "nano": {"label": "Nano", "command": ["nano", "--", "{path}"], "terminal": True},
     "firefox": {"label": "Firefox", "command": ["firefox", "{path}"], "terminal": False},
+    "python": {"label": "Python 执行", "command": ["python", "{path}"], "terminal": True, "pause_on_exit": True},
+    "markdown": {"label": "Toolkit Markdown / Firefox", "command": ["node", "{filex}/scripts/open_markdown.mjs", "--toolkit", "{toolkit}", "--browser", "firefox", "--", "{path}"], "terminal": False, "copy_path": True},
 }
 
 
@@ -27,23 +29,23 @@ def key_code(key):
     """Translate editable Ctrl+letter bindings to the character sent by terminals."""
     if isinstance(key, str) and re.fullmatch(r"(?i)ctrl\+[a-z]", key):
         return chr(ord(key[-1].lower()) - ord("a") + 1)
+    if isinstance(key, str) and re.fullmatch(r"(?i)ctrl\+alt\+[a-z]", key):
+        return key.lower()
     if isinstance(key, str) and key.lower() == "left":
         return "left"
     return key
 
 
 def key_map(config):
-    return {key_code(key): action for action, key in config.keys.items()}
+    return {**{key_code(key): action for action, key in config.keys.items()}, "R": "rename", "ctrl+alt+c": "copy_path"}
 
 
-def navigation_keys(orientation):
-    if orientation == "vertical":
-        return {"up": "parent", "down": "expand", "left": "up", "right": "down"}
+def navigation_keys():
     return {"up": "up", "down": "down", "left": "parent", "right": "expand"}
 
 
-def navigation_hint(orientation):
-    return "←→ 同级 ↑ 父级 ↓ 展开" if orientation == "vertical" else "↑↓ 同级 ← 父级 → 展开"
+def navigation_hint():
+    return "↑↓ 同级 ← 父级 → 展开"
 
 
 def config_path():
@@ -60,8 +62,8 @@ class Config:
     max_entries: int = 1000
     max_loaded_nodes: int = 6000
     row_spacing: int = 1
-    orientation: str = "horizontal"
     open_in_right_pane: bool = True
+    auto_english: bool = True
     preview_bytes: int = 65536
     dashboard_width: int = 36
     search_max_results: int = 500
@@ -76,8 +78,8 @@ class Config:
     line_color: str = "#526779"
     keys: dict = field(default_factory=lambda: DEFAULT_KEYS.copy())
     openers: dict = field(default_factory=lambda: {k: {**v, "command": v["command"].copy()} for k, v in DEFAULT_OPENERS.items()})
-    open_defaults: dict = field(default_factory=lambda: {".py": "vscodium", ".html": "firefox", ".htm": "firefox", "*": "system"})
-    extension_colors: dict = field(default_factory=lambda: {".py": "#e5c07b", ".html": "#e06c75", ".png": "#c792ea", ".jpg": "#c792ea", ".md": "#98c379"})
+    open_defaults: dict = field(default_factory=lambda: {".py": "vscodium", ".html": "firefox", ".htm": "firefox", ".md": "markdown", ".markdown": "markdown", "*": "system"})
+    extension_colors: dict = field(default_factory=lambda: {".py": "#e5c07b", ".html": "#e06c75", ".png": "#c792ea", ".jpg": "#c792ea", ".md": "#98c379", ".r": "#61afef", ".cpp": "#56b6c2", ".sh": "#98c379", ".mp3": "#c792ea", ".mp4": "#e06c75"})
 
 
 def extension_rule(path, rules, directory=False):
@@ -104,18 +106,24 @@ def load_config(path=None):
             data = tomllib.load(stream)
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"无法读取配置 {path}: {exc}") from exc
-    allowed = {"browser", "layout", "preview", "gui", "colors", "keys", "search", "dashboard", "openers", "open_defaults", "extension_colors", "tmux"}
+    allowed = {"browser", "layout", "preview", "gui", "colors", "keys", "search", "dashboard", "openers", "open_defaults", "extension_colors", "tmux", "input_method"}
     unknown = data.keys() - allowed
     if unknown:
         raise ValueError(f"未知配置区段: {', '.join(sorted(unknown))}")
     sections = {
         "browser": {"show_hidden", "sort", "directories_first", "max_entries", "max_expand_nodes", "max_loaded_nodes"},
-        "layout": {"column_gap", "max_label_width", "row_spacing", "orientation"},
+        "layout": {"column_gap", "max_label_width", "row_spacing"},
         "tmux": {"open_in_right_pane"},
+        "input_method": {"auto_english"},
         "preview": {"preview_bytes"}, "gui": {"gui_font_size"}, "dashboard": {"dashboard_width"},
         "search": {"search_max_results", "search_scan_limit"},
         "colors": {"background", "foreground", "folder_color", "file_color", "selected_color", "line_color"},
     }
+    # Drop retired options without changing the user's other settings.
+    if isinstance(data.get("layout"), dict):
+        data["layout"].pop("orientation", None)
+    if isinstance(data.get("keys"), dict):
+        data["keys"].pop("toggle_tree", None)
     color_pattern = r"#[0-9a-fA-F]{6}"
     for section, names in sections.items():
         values = data.get(section, {})
@@ -131,8 +139,6 @@ def load_config(path=None):
             setattr(conf, key, value)
     if conf.sort not in {"name", "size", "modified"}:
         raise ValueError("sort 应为 name、size 或 modified")
-    if conf.orientation not in {"horizontal", "vertical"}:
-        raise ValueError("orientation 应为 horizontal 或 vertical")
     for key, low, high in [("column_gap", 3, 20), ("max_label_width", 12, 120),
                             ("max_entries", 1, 100000), ("max_loaded_nodes", 100, 100000), ("row_spacing", 1, 4),
                             ("preview_bytes", 1024, 1048576), ("gui_font_size", 8, 32),
@@ -149,16 +155,22 @@ def load_config(path=None):
         keys["quit"] = "Q"
     if keys.get("parent") == "u":
         keys["parent"] = "Left"
+    if keys.get("refresh") == "r":
+        keys["refresh"] = "Ctrl+r"
+    if keys.get("rename") == "R":
+        keys["rename"] = "r"
     reserved = {"\n", "\r", "\t", " ", "\x1b", "\x03", "\x15", "\x13", "\x11", "\x1a", "H", "L", ":"}
     for action, key in keys.items():
         code = key_code(key)
-        ctrl = isinstance(key, str) and bool(re.fullmatch(r"(?i)ctrl\+[a-z]", key))
+        ctrl = isinstance(key, str) and bool(re.fullmatch(r"(?i)ctrl\+(alt\+)?[a-z]", key))
         if not isinstance(key, str) or not (ctrl or len(key) == 1 and key.isprintable() or action == "parent" and code == "left") or code in reserved:
             raise ValueError(f"keys.{action}: 应为一个非保留字符、Ctrl+字母或 parent=Left")
         if code in {"\x06", "/"} and action != "search":
             raise ValueError("Ctrl+F 和 / 保留给搜索")
         if code == "\x0c" and action != "goto":
             raise ValueError("Ctrl+L 保留给路径输入")
+        if code == "R" and action != "rename" or code == "ctrl+alt+c" and action != "copy_path":
+            raise ValueError("Shift+R / Ctrl+Alt+C 保留给重命名 / 复制路径")
         conf.keys[action] = key
     if len({key_code(k) for k in conf.keys.values()}) != len(conf.keys):
         raise ValueError("快捷键重复，请为冲突动作同时指定不同字符")
@@ -166,7 +178,7 @@ def load_config(path=None):
     if not isinstance(openers, dict):
         raise ValueError("openers: 应为程序定义表")
     for name, opener in openers.items():
-        if not isinstance(opener, dict) or opener.keys() - {"label", "command", "terminal"}:
+        if not isinstance(opener, dict) or opener.keys() - {"label", "command", "terminal", "copy_path", "pause_on_exit"}:
             raise ValueError(f"openers.{name}: 未知字段")
         base = conf.openers.get(name, {"label": name, "terminal": False})
         value = {**base, **opener}
@@ -177,6 +189,10 @@ def load_config(path=None):
             raise ValueError(f"openers.{name}.command: 必须包含 {{path}}")
         if not isinstance(value["label"], str) or not value["label"] or type(value["terminal"]) is not bool:
             raise ValueError(f"openers.{name}: label 应为字符串，terminal 应为布尔值")
+        if type(value.get("copy_path", False)) is not bool:
+            raise ValueError(f"openers.{name}.copy_path: 应为布尔值")
+        if type(value.get("pause_on_exit", False)) is not bool:
+            raise ValueError(f"openers.{name}.pause_on_exit: 应为布尔值")
         conf.openers[name] = value
     for section in ("open_defaults", "extension_colors"):
         values = data.get(section, {})

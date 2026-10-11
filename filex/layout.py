@@ -11,7 +11,7 @@ class Placement:
 
 
 class Layout:
-    """Shared horizontal/vertical tree in character-cell coordinates."""
+    """Shared horizontal tree in character-cell coordinates."""
     def __init__(self, browser):
         nodes = browser.visible()
         config = browser.config
@@ -21,48 +21,6 @@ class Layout:
             depths[node] = depth
             labels[node] = shorten(node.label, config.max_label_width)
             widths[depth] = max(widths.get(depth, 0), cell_width(labels[node]))
-        if config.orientation == "vertical":
-            spans = {}
-            centers = {}
-            for node in reversed(nodes):
-                children_width = (sum(spans[child] for child in node.children) +
-                                  config.column_gap * (len(node.children) - 1)) if node.expanded and node.children else 0
-                label_width = cell_width(labels[node])
-                span = max(label_width, children_width)
-                if node.expanded and node.children:
-                    start = (span - children_width) // 2
-                    preferred = (start + centers[node.children[0]] + start + children_width -
-                                 spans[node.children[-1]] + centers[node.children[-1]]) // 2
-                else:
-                    preferred = label_width // 2
-                centers[node] = max(label_width // 2, min(span - label_width + label_width // 2, preferred))
-                spans[node] = span
-            starts = {browser.root: 0}
-            self.placements = []
-            for node in nodes:
-                self.placements.append(Placement(node, starts[node] + centers[node] - cell_width(labels[node]) // 2,
-                                                 depths[node] * (config.row_spacing + 1), labels[node]))
-                if node.expanded and node.children:
-                    children_width = sum(spans[child] for child in node.children) + config.column_gap * (len(node.children) - 1)
-                    start = starts[node] + (spans[node] - children_width) // 2
-                    for child in node.children:
-                        starts[child] = start
-                        start += spans[child] + config.column_gap
-            self.by_node = {item.node: item for item in self.placements}
-            self.lines = []
-            for item in self.placements:
-                if not item.node.expanded or not item.node.children:
-                    continue
-                center = item.x + cell_width(item.label) // 2
-                children = [self.by_node[child] for child in item.node.children]
-                centers = [child.x + cell_width(child.label) // 2 for child in children]
-                branch_y = children[0].y - 1
-                self.lines.append((center, item.y, center, branch_y))
-                self.lines.append((min(center, centers[0]), branch_y, max(center, centers[-1]), branch_y))
-                self.lines.extend((x, branch_y, x, child.y) for x, child in zip(centers, children))
-            self.width = max(item.x + cell_width(item.label) for item in self.placements)
-            self.height = max(item.y for item in self.placements) + 1
-            return
         columns = {0: 0}
         for depth in range(1, max(widths) + 1):
             columns[depth] = columns[depth - 1] + widths[depth - 1] + config.column_gap

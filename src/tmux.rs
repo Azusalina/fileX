@@ -138,8 +138,18 @@ pub fn open_in_right_pane(command: &Command) -> Option<String> {
         return None;
     }
     // Absolute executable and quoted arguments ignore aliases/functions and shell metacharacters.
+    let cwd = match command.get_current_dir() {
+        Some(path) => Some(path.to_str()?),
+        None => None,
+    };
+    if cwd.is_some_and(|path| path.contains(['\r', '\n', '\0'])) {
+        return None;
+    }
+    let prefix = cwd
+        .map(|dir| format!("env -C {} --", shell_quote(dir)))
+        .unwrap_or_else(|| "env --".into());
     let line = format!(
-        "env -- {}",
+        "{prefix} {}",
         args.iter()
             .map(|arg| shell_quote(arg))
             .collect::<Vec<_>>()

@@ -27,9 +27,10 @@ def measure(root, actions):
         deadline = time.monotonic() + duration
         while time.monotonic() < deadline:
             try:
-                values = dict(line.split(":", 1) for line in Path(f"/proc/{process.pid}/status").read_text().splitlines() if ":" in line)
-                observed_rss = max(observed_rss, int(values.get("VmRSS", "0 kB").split()[0]))
-                peak = max(peak, int(values.get("VmHWM", "0 kB").split()[0]))
+                if os.readlink(f"/proc/{process.pid}/exe") == str(ROOT / "target/release/filex"):
+                    values = dict(line.split(":", 1) for line in Path(f"/proc/{process.pid}/status").read_text().splitlines() if ":" in line)
+                    observed_rss = max(observed_rss, int(values.get("VmRSS", "0 kB").split()[0]))
+                    peak = max(peak, int(values.get("VmHWM", "0 kB").split()[0]))
             except (FileNotFoundError, ProcessLookupError):
                 pass
             readable, _, _ = select.select([master], [], [], .01)
@@ -75,10 +76,10 @@ with tempfile.TemporaryDirectory(prefix="filex-memory-") as directory:
         folder.mkdir()
         for j in range(120):
             (folder / f"needle_B{i:03d}_I{j:03d}.txt").touch()
-    report = {"version": "1.3.0", "binary_sha256": hashlib.sha256((ROOT / "target/release/filex").read_bytes()).hexdigest(), "date": time.strftime("%Y-%m-%d"), "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications", "settings": {"max_entries": 1000, "max_loaded_nodes": 6000, "max_expand_nodes": 5000}, "scenarios": {
-        "project_root": measure(ROOT, ["q", "E", "v", "C", "r"]),
-        "flat_20000_files": measure(flat, ["q", "\x06文件_19999\r", "p", "\x1b", "\x1b[D", "\x1b[D", "\x1b[D", "v"]),
-        "branches_7200_files": measure(branches, ["E", "q", "\x06needle_B059_I119\r", "\x1b[D", "\x1b[D", "\x1b[D", "v"]),
+    report = {"version": "1.4.0", "binary_sha256": hashlib.sha256((ROOT / "target/release/filex").read_bytes()).hexdigest(), "date": time.strftime("%Y-%m-%d"), "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications", "settings": {"max_entries": 1000, "max_loaded_nodes": 6000, "max_expand_nodes": 5000}, "scenarios": {
+        "project_root": measure(ROOT, ["q", "E", "C", "\x12"]),
+        "flat_20000_files": measure(flat, ["q", "\x06文件_19999\r", "p", "\x1b", "\x1b[D", "\x1b[D", "\x1b[D", "\x12"]),
+        "branches_7200_files": measure(branches, ["E", "q", "\x06needle_B059_I119\r", "\x1b[D", "\x1b[D", "\x1b[D", "\x12"]),
     }}
     destination = ROOT / "memory-validation.json"
     destination.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")

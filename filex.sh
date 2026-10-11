@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 filex_root="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
+export FILEX_ROOT="$filex_root"
 # GUI remains the existing Qt implementation; default TUI is a native Rust process.
 for filex_arg in "$@"; do
     if [[ "$filex_arg" == "--gui" ]]; then
