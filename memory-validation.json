@@ -1,0 +1,60 @@
+{
+  "version": "1.3.0",
+  "binary_sha256": "9120d96f5726fac3f59b0272b082a38172a9ba86dcd245fc5f8528b35265b6c2",
+  "date": "2026-10-11",
+  "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications",
+  "settings": {
+    "max_entries": 1000,
+    "max_loaded_nodes": 6000,
+    "max_expand_nodes": 5000
+  },
+  "scenarios": {
+    "project_root": {
+      "max_observed_rss_kib": 3904,
+      "peak_rss_kib": 3904,
+      "peak_rss_mb": 3.998,
+      "peak_rss_mib": 3.812,
+      "under_15_mb": true,
+      "actions": [
+        "q",
+        "E",
+        "v",
+        "C",
+        "r"
+      ]
+    },
+    "flat_20000_files": {
+      "max_observed_rss_kib": 3848,
+      "peak_rss_kib": 3848,
+      "peak_rss_mb": 3.94,
+      "peak_rss_mib": 3.758,
+      "under_15_mb": true,
+      "actions": [
+        "q",
+        "\u0006文件_19999\r",
+        "p",
+        "\u001b",
+        "\u001b[D",
+        "\u001b[D",
+        "\u001b[D",
+        "v"
+      ]
+    },
+    "branches_7200_files": {
+      "max_observed_rss_kib": 6128,
+      "peak_rss_kib": 6128,
+      "peak_rss_mb": 6.275,
+      "peak_rss_mib": 5.984,
+      "under_15_mb": true,
+      "actions": [
+        "E",
+        "q",
+        "\u0006needle_B059_I119\r",
+        "\u001b[D",
+        "\u001b[D",
+        "\u001b[D",
+        "v"
+      ]
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "backend": "Python/PySide6 existing GUI",
+  "platform": "wayland",
+  "visible_nodes": 8,
+  "rss_kib": 142100,
+  "rss_mb": 145.51,
+  "future_target_mb": 50,
+  "target_achieved": false
+}
