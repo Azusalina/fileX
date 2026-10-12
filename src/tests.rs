@@ -137,7 +137,7 @@ fn creation_preview_and_metadata() {
     let preview = files::preview(&path, 1024);
     assert!(preview.contains("截断"));
     assert!(preview.contains("世界"));
-    let metadata = files::metadata(&path);
+    let metadata = files::metadata(&path, &f.0, &Config::default());
     assert!(metadata.contains("Created"));
     assert!(metadata.contains("Modified"));
     assert!(metadata.contains("Size"));
@@ -155,17 +155,42 @@ fn config_validation_and_long_suffix() {
         "vim"
     );
     assert_eq!(key_code("中文"), "中文");
+    assert_eq!(key_code("CTRL+F5"), "ctrl+f5");
+    assert_eq!(Config::default().action("ctrl+f5"), Some("refresh"));
+    fs::write(&path, "[keys]\nrefresh='Ctrl+F5'\n").unwrap();
+    assert_eq!(
+        Config::load(&path).unwrap().action("ctrl+f5"),
+        Some("refresh")
+    );
+    let defaults = Config::default();
+    for name in ["sample.js", "sample.MJS"] {
+        assert_eq!(
+            defaults
+                .rule(&f.0.join(name), &defaults.extension_colors, false)
+                .map(String::as_str),
+            Some("#FFD700")
+        );
+    }
+    fs::write(&path, "[extension_colors]\n'.js'='#ffd700'\n").unwrap();
+    let conf = Config::load(&path).unwrap();
+    assert_eq!(
+        conf.rule(&f.0.join("test.JS"), &conf.extension_colors, false)
+            .map(String::as_str),
+        Some("#ffd700")
+    );
     for content in [
         "[keys]\nquit='j'",
+        "[keys]\ncopy='Ctrl+F5'",
         "[openers.bad]\ncommand=['echo']",
         "[open_defaults]\n'.py'='missing'",
         "[what]",
         "[layout]\ncolumn_gap=true",
+        "[extension_colors]\n'.js'='FFD700'",
     ] {
         fs::write(&path, content).unwrap();
         assert!(Config::load(&path).is_err(), "{content}");
     }
-    Config::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fileX.conf")).unwrap();
+    Config::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fileX.example.conf")).unwrap();
 }
 #[test]
 fn node_cache_remains_bounded() {
@@ -214,6 +239,8 @@ fn sibling_arrows_skip_open_descendants_and_back_keeps_expansion() {
     browser.right();
     assert!(browser.selected.borrow().path.ends_with("left/deep"));
     browser.step(1);
+    assert!(browser.selected.borrow().path.ends_with("right/deep"));
+    browser.step(-1);
     assert!(browser.selected.borrow().path.ends_with("left/deep"));
     browser.back().unwrap();
     assert!(Rc::ptr_eq(&browser.selected, &left));
@@ -247,6 +274,97 @@ fn old_config_migrates_to_horizontal_and_new_shortcuts() {
     let layout = Layout::new(&browser);
     assert_eq!(layout.items[0].y, layout.items[1].y);
     assert!(layout.items[1].x > layout.items[0].x);
+}
+
+#[test]
+fn visible_level_navigation_crosses_parents_and_wraps_both_ends() {
+    let f = Fixture::new();
+    fs::write(f.0.join("left/local.txt"), "mixed file at directory level").unwrap();
+    let mut browser = Browser::new(&f.0, Config::default()).unwrap();
+    browser.expand_all().unwrap();
+    let find = |browser: &Browser, path: &str| {
+        browser
+            .visible()
+            .into_iter()
+            .find(|node| node.borrow().path == f.0.join(path))
+            .unwrap()
+    };
+    let first = find(&browser, "left/deep");
+    let last = find(&browser, "right/deep");
+    browser.selected = first.clone();
+    browser.step(-1);
+    assert!(Rc::ptr_eq(&browser.selected, &last));
+    browser.step(1);
+    assert!(Rc::ptr_eq(&browser.selected, &first));
+    browser.step(1);
+    assert!(browser.selected.borrow().path.ends_with("left/local.txt"));
+    browser.step(1);
+    assert!(Rc::ptr_eq(&browser.selected, &last));
+    browser.back().unwrap();
+    assert!(browser.selected.borrow().path.ends_with("right"));
+    browser.selected = find(&browser, "left/deep/needle 中文.PY");
+    browser.step(1);
+    assert!(
+        browser
+            .selected
+            .borrow()
+            .path
+            .ends_with("right/deep/needle 中文.PY")
+    );
+    browser.step(1);
+    assert!(
+        browser
+            .selected
+            .borrow()
+            .path
+            .ends_with("left/deep/needle 中文.PY")
+    );
+    let right = find(&browser, "right");
+    right.borrow_mut().expanded = false;
+    browser.selected = first.clone();
+    browser.step(-1);
+    assert!(browser.selected.borrow().path.ends_with("left/local.txt"));
+    assert!(first.borrow().expanded);
+    assert!(last.borrow().expanded);
+    browser.selected = browser.root.clone();
+    browser.step(-1);
+    assert!(Rc::ptr_eq(&browser.selected, &browser.root));
+}
+
+#[test]
+fn dashboard_width_and_exact_folder_name_colors_are_configurable() {
+    let f = Fixture::new();
+    let path = f.0.join("settings.conf");
+    fs::write(&path, "[dashboard]\ndashboard_width=100\n[colors]\npath_color=' #9cc5d1 '\n[extension_colors]\n'.js'=' #FFD700 '\n[folder_colors]\nnode_modules='#123456'\nCustom='#FFD700'\n'.git'=' #FFFEF7 '\n__pycache__=' #ADD8E6'\n").unwrap();
+    let conf = Config::load(&path).unwrap();
+    assert_eq!(conf.dashboard_columns(140), 100);
+    assert_eq!(conf.dashboard_columns(100), 62);
+    assert_eq!(conf.dashboard_columns(70), 32);
+    assert_eq!(conf.dashboard_columns(69), 0);
+    assert_eq!(conf.folder_color_for(&f.0.join("node_modules")), "#123456");
+    assert_eq!(conf.folder_color_for(&f.0.join("Custom")), "#FFD700");
+    assert_eq!(conf.folder_color_for(&f.0.join(".git")), "#FFFEF7");
+    assert_eq!(conf.folder_color_for(&f.0.join("__pycache__")), "#ADD8E6");
+    assert_eq!(conf.path_color, "#9cc5d1");
+    assert_eq!(conf.extension_colors[".js"], "#FFD700");
+    assert_eq!(
+        conf.folder_color_for(&f.0.join("custom")),
+        conf.folder_color
+    );
+    assert_eq!(conf.keys["dashboard_narrow"], "[");
+    assert_eq!(conf.keys["dashboard_widen"], "]");
+    for invalid in [
+        "[dashboard]\ndashboard_width=19",
+        "[dashboard]\ndashboard_width=241",
+        "[folder_colors]\nnode_modules='red'",
+        "[folder_colors]\n'a/b'='#123456'",
+        "[folder_colors]\n''='#123456'",
+    ] {
+        fs::write(&path, invalid).unwrap();
+        assert!(Config::load(&path).is_err(), "{invalid}");
+    }
+    fs::write(&path, "[keys]\ncopy='['\n").unwrap();
+    assert_eq!(Config::load(&path).unwrap().keys["dashboard_narrow"], "{");
 }
 
 #[test]
@@ -294,4 +412,162 @@ fn python_runner_and_extra_extension_colors() {
     for extension in [".r", ".cpp", ".sh", ".mp3", ".mp4"] {
         assert!(conf.extension_colors.contains_key(extension));
     }
+}
+
+#[test]
+fn link_details_bounded_peers_and_visible_badges() {
+    use std::os::unix::fs::{MetadataExt, symlink};
+    let f = Fixture::new();
+    let name = "very_long_file_name_with_Chinese_中文.txt";
+    let path = f.0.join(name);
+    fs::write(&path, "same inode").unwrap();
+    let peer = f.0.join(".hidden-hard-link");
+    fs::hard_link(&path, &peer).unwrap();
+    fs::hard_link(&path, f.0.join("second-hard-link")).unwrap();
+    symlink(name, f.0.join("soft")).unwrap();
+    symlink("missing", f.0.join("broken")).unwrap();
+    symlink(&f.0, f.0.join("directory-link")).unwrap();
+    let conf = Config::default();
+    let text = files::metadata(&path, &f.0, &conf);
+    assert!(text.contains("硬链接: 3"));
+    assert!(text.contains(&peer.to_string_lossy().to_string()));
+    let info = fs::symlink_metadata(&path).unwrap();
+    assert_eq!(info.nlink(), 3);
+    let limited = crate::links::peers(&path, &f.0, &info, 1, 32);
+    assert!(limited.limited);
+    assert!(limited.scanned <= 1);
+    let capped = crate::links::peers(&path, &f.0, &info, 10000, 1);
+    assert_eq!(capped.paths.len(), 1);
+    assert!(capped.limited);
+    let soft = files::metadata(&f.0.join("soft"), &f.0, &conf);
+    assert!(soft.contains(&format!("软链接 → {name}")));
+    assert!(soft.contains("状态: 有效"));
+    assert!(files::metadata(&f.0.join("broken"), &f.0, &conf).contains("状态: 断开"));
+    let mut browser = Browser::new(&f.0, conf).unwrap();
+    let node = browser
+        .root
+        .borrow()
+        .children
+        .iter()
+        .find(|node| node.borrow().path == path)
+        .unwrap()
+        .clone();
+    assert!(node.borrow().label(14).0.ends_with("H×3"));
+    assert!(!browser.root.borrow().label(32).0.contains("H×"));
+    fs::remove_file(&peer).unwrap();
+    browser.refresh();
+    assert_eq!(node.borrow().links, 2);
+}
+
+#[test]
+fn symlink_target_has_separate_bounded_label_segment() {
+    let f = Fixture::new();
+    fs::write(f.0.join("b.txt"), "target").unwrap();
+    std::os::unix::fs::symlink("b.txt", f.0.join("a.js")).unwrap();
+    std::os::unix::fs::symlink("missing", f.0.join("broken")).unwrap();
+    std::os::unix::fs::symlink(
+        "../long/path/目标\nfile.txt",
+        f.0.join("中文_very_long_source.js"),
+    )
+    .unwrap();
+    fs::write(f.0.join("ordinary------b"), "ordinary").unwrap();
+    let browser = Browser::new(&f.0, Config::default()).unwrap();
+    let layout = Layout::new(&browser);
+    let item = layout
+        .items
+        .iter()
+        .find(|item| item.node.borrow().path.ends_with("a.js"))
+        .unwrap();
+    assert_eq!(item.label, "· a.js------b.txt");
+    assert_eq!(&item.label[item.link_start.unwrap()..], "------b.txt");
+    for item in &layout.items {
+        if item.node.borrow().link {
+            assert!(
+                unicode_width::UnicodeWidthStr::width(item.label.as_str())
+                    <= browser.conf.label_width
+            );
+            assert!(!item.label.contains('\n'));
+        } else {
+            assert!(item.link_start.is_none());
+        }
+    }
+    assert!(layout.plain().contains("broken------missing"));
+    assert_eq!(browser.conf.link_color, "#4B0082");
+}
+
+#[test]
+fn creation_shortcuts_can_be_configured_without_modifier_loss() {
+    assert_eq!(key_code("Ctrl+Shift+N"), "ctrl+shift+n");
+    assert_eq!(Config::default().action("\x0e"), Some("new_file"));
+    assert_eq!(Config::default().action("ctrl+shift+n"), Some("new_folder"));
+    let f = Fixture::new();
+    let path = f.0.join("keys.conf");
+    fs::write(&path, "[keys]\nnew_file='Ctrl+n'\nnew_folder='Ctrl+Shift+n'\n[links]\nscan_limit=42\nmax_results=3").unwrap();
+    let conf = Config::load(&path).unwrap();
+    assert_eq!(conf.link_scan_limit, 42);
+    assert_eq!(conf.link_results, 3);
+    fs::write(&path, "[keys]\ncopy='Ctrl+Shift+n'").unwrap();
+    assert!(Config::load(&path).is_err());
+    fs::write(&path, "[keys]\nquit='x'").unwrap();
+    let migrated = Config::load(&path).unwrap();
+    assert_eq!(migrated.action("x"), Some("quit"));
+    assert_ne!(migrated.keys["exit_here"], "x");
+}
+
+#[test]
+fn dashboard_head_is_bounded_configurable_and_skips_links() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    let path = f.0.join("head.txt");
+    fs::write(&path, "HEAD_ONE\nHEAD_TWO\nOMITTED_THREE\n").unwrap();
+    let mut conf = Config {
+        preview_lines: 2,
+        ..Config::default()
+    };
+    let text = files::dashboard(&path, &f.0, &conf);
+    assert!(text.contains("HEAD_ONE\nHEAD_TWO"));
+    assert!(!text.contains("OMITTED_THREE"));
+    assert!(text.contains("Modified") && text.contains("Size"));
+    conf.preview_lines = 0;
+    assert!(!files::dashboard(&path, &f.0, &conf).contains("HEAD_ONE"));
+    conf.preview_lines = 2;
+    symlink(&path, f.0.join("soft-head")).unwrap();
+    assert!(!files::dashboard(&f.0.join("soft-head"), &f.0, &conf).contains("HEAD_ONE"));
+    fs::write(&path, b"\0BINARY_CONTENT").unwrap();
+    assert!(!files::dashboard(&path, &f.0, &conf).contains("BINARY_CONTENT"));
+}
+
+#[test]
+fn selected_route_highlights_ancestor_edges_without_sibling_branches() {
+    use unicode_width::UnicodeWidthStr;
+    let f = Fixture::new();
+    let mut b = Browser::new(&f.0, Config::default()).unwrap();
+    b.expand_all().unwrap();
+    b.find_next("needle", 1).unwrap();
+    let layout = Layout::new(&b);
+    let route = layout.path_cells(&b.selected, b.conf.gap, 0, 0, layout.width, layout.height);
+    let selected = layout
+        .items
+        .iter()
+        .find(|p| Rc::ptr_eq(&p.node, &b.selected))
+        .unwrap();
+    assert!(route.contains(&(selected.x - 1, selected.y)));
+    let right = layout
+        .items
+        .iter()
+        .find(|p| p.node.borrow().path == f.0.join("right"))
+        .unwrap();
+    assert!(!route.contains(&(right.x - 1, right.y)));
+    let root = &layout.items[0];
+    assert!(route.contains(&(root.x + root.label.width(), root.y)));
+    assert!(route.iter().all(|point| {
+        layout
+            .cells(0, 0, layout.width, layout.height)
+            .contains_key(point)
+    }));
+    assert!(
+        layout
+            .path_cells(&b.root, b.conf.gap, 0, 0, layout.width, layout.height)
+            .is_empty()
+    );
 }

@@ -33,8 +33,9 @@ class MarkdownTests(unittest.TestCase):
             helpers.mkdir()
             clipboard = root / ".clipboard"
             browser_record = root / ".browser.json"
+            clipboard_daemon = root / ".clipboard-daemon"
             for name, code in {
-                "wl-copy": f"from pathlib import Path; import sys; Path({str(clipboard)!r}).write_bytes(sys.stdin.buffer.read())",
+                "wl-copy": f"from pathlib import Path; import sys,os,time; Path({str(clipboard)!r}).write_bytes(sys.stdin.buffer.read()); child=os.fork(); Path({str(clipboard_daemon)!r}).write_text(str(os.getpid())) if child==0 else None; time.sleep(12) if child==0 else None; os._exit(0)",
                 "firefox": f"from pathlib import Path; import json,os,sys; Path({str(browser_record)!r}).write_text(json.dumps([os.getppid(),sys.argv[1:]]))",
             }.items():
                 executable = helpers / name
@@ -44,7 +45,7 @@ class MarkdownTests(unittest.TestCase):
             config.write_text("[input_method]\nauto_english=false\n")
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 26, 120, 0, 0))
-            env = {**{k: v for k, v in os.environ.items() if k not in {"TMUX", "TMUX_PANE"}},
+            env = {**{k: v for k, v in os.environ.items() if k not in {"TMUX", "TMUX_PANE"} and not k.startswith("KONSOLE_DBUS_")},
                    "TERM": "xterm-256color", "PATH": str(helpers) + os.pathsep + os.environ["PATH"]}
             process = subprocess.Popen([str(ROOT / "filex.sh"), str(root), "--config", str(config)],
                                        stdin=slave, stdout=slave, stderr=slave, env=env)
@@ -87,6 +88,9 @@ class MarkdownTests(unittest.TestCase):
                     process.terminate()
                     process.wait(timeout=3)
                 os.close(master)
+                if clipboard_daemon.exists():
+                    try: os.kill(int(clipboard_daemon.read_text()), signal.SIGTERM)
+                    except ProcessLookupError: pass
                 if server_pid and Path(f"/proc/{server_pid}/cmdline").exists():
                     if b"open_markdown.mjs" in Path(f"/proc/{server_pid}/cmdline").read_bytes():
                         os.kill(server_pid, signal.SIGTERM)

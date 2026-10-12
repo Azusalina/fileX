@@ -1,14 +1,18 @@
 mod config;
 mod files;
 mod input;
+mod links;
 mod model;
+mod terminal_host;
 mod tmux;
 mod tui;
 use std::{
     env,
     fs::OpenOptions,
     io::{self, IsTerminal, Write},
+    os::unix::process::CommandExt,
     path::PathBuf,
+    process::Command,
 };
 fn main() {
     if let Err(error) = run() {
@@ -30,7 +34,7 @@ fn run() -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "filex\nfilex [目录] [--config PATH] [--print-tree] [--init-config]\nfilex --gui [目录]\n默认当前工作目录；q 信息 / Q 退出 / Ctrl+F 搜索 / Enter 打开方式 / r 重命名 / Ctrl+Alt+C 复制路径"
+                    "filex\nfilex [目录] [--config PATH] [--print-tree] [--init-config]\n默认当前工作目录；q 信息 / Q 退出 / Ctrl+F 搜索 / Enter 打开方式 / r 重命名 / Ctrl+Alt+C 复制路径"
                 );
                 return Ok(());
             }
@@ -68,7 +72,7 @@ fn run() -> Result<(), String> {
             .create_new(true)
             .open(&conf_path)
             .map_err(|e| e.to_string())?;
-        file.write_all(include_bytes!("../fileX.conf"))
+        file.write_all(include_bytes!("../fileX.example.conf"))
             .map_err(|e| e.to_string())?;
         println!("已创建配置: {}", conf_path.display());
         return Ok(());
@@ -83,9 +87,22 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return Err("TUI 需要交互终端；可用 --print-tree 或 --gui".into());
+        return Err("TUI 需要交互终端；可用 --print-tree ".into());
     }
-    tui::run(browser, conf_path)
+    if let Some(directory) = tui::run(browser, conf_path)?
+        && env::var_os("FILEX_CWD_FILE").is_none()
+    {
+        // An executable cannot cd its caller. Replace this already-restored
+        // process with an interactive shell in the chosen directory instead.
+        let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/bash".into());
+        let error = Command::new(shell)
+            .arg("-i")
+            .current_dir(directory)
+            .env_remove("FILEX_CWD_FILE")
+            .exec();
+        return Err(format!("启动所选目录的 shell 失败: {error}"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

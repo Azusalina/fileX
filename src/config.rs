@@ -24,25 +24,41 @@ pub struct Config {
     pub gap: usize,
     pub label_width: usize,
     pub row_spacing: usize,
+    pub highlight_path: bool,
     pub tmux_right: bool,
     pub auto_english: bool,
+    pub konsole_shortcuts: bool,
+    pub tmux_extended_keys: bool,
+    pub link_scan_limit: usize,
+    pub link_results: usize,
     pub preview_bytes: usize,
+    pub preview_lines: usize,
     pub dashboard_width: usize,
     pub search_results: usize,
     pub search_limit: usize,
     pub folder_color: String,
+    pub folder_colors: BTreeMap<String, String>,
     pub file_color: String,
     pub line_color: String,
+    pub link_color: String,
+    pub path_color: String,
     pub keys: BTreeMap<String, String>,
     pub openers: BTreeMap<String, Opener>,
     pub defaults: BTreeMap<String, String>,
     pub extension_colors: BTreeMap<String, String>,
 }
 pub fn config_path() -> PathBuf {
-    env::var_os("XDG_CONFIG_HOME")
+    let directory = env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env::var_os("HOME").unwrap_or_default()).join(".config"))
-        .join("fileX/fileX.conf")
+        .join("fileX");
+    let path = directory.join("filex.conf");
+    let legacy = directory.join("fileX.conf");
+    if !path.exists() && legacy.exists() {
+        legacy
+    } else {
+        path
+    }
 }
 pub fn product_root() -> PathBuf {
     env::var_os("FILEX_ROOT")
@@ -59,11 +75,17 @@ pub fn expand_home(value: &str) -> PathBuf {
     }
 }
 pub fn key_code(value: &str) -> String {
-    if value.len() == 10
-        && value.as_bytes()[..9].eq_ignore_ascii_case(b"ctrl+alt+")
-        && value.as_bytes()[9].is_ascii_alphabetic()
-    {
-        return value.to_ascii_lowercase();
+    let lowered = value.to_ascii_lowercase();
+    if lowered == "ctrl+f5" {
+        return lowered;
+    }
+    for prefix in ["ctrl+alt+", "ctrl+shift+", "ctrl+alt+shift+"] {
+        if lowered.len() == prefix.len() + 1
+            && lowered.starts_with(prefix)
+            && lowered.as_bytes()[prefix.len()].is_ascii_alphabetic()
+        {
+            return lowered;
+        }
     }
     if value.eq_ignore_ascii_case("Left") {
         return "left".into();
@@ -80,7 +102,11 @@ impl Default for Config {
     fn default() -> Self {
         let keys = [
             ("quit", "Q"),
+            ("exit_here", "x"),
             ("dashboard", "q"),
+            ("dashboard_narrow", "["),
+            ("dashboard_widen", "]"),
+            ("link_info", "I"),
             ("expand", "l"),
             ("collapse", "h"),
             ("up", "k"),
@@ -124,6 +150,8 @@ impl Default for Config {
             ("nano", "Nano", vec!["nano", "--", "{path}"], true),
             ("firefox", "Firefox", vec!["firefox", "{path}"], false),
             ("python", "Python 执行", vec!["python", "{path}"], true),
+            ("rscript", "Rscript 执行", vec!["Rscript", "{path}"], true),
+            ("bash", "Bash 执行", vec!["bash", "--", "{path}"], true),
             (
                 "markdown",
                 "Toolkit Markdown / Firefox",
@@ -149,7 +177,7 @@ impl Default for Config {
                     command: command.into_iter().map(str::to_string).collect(),
                     terminal,
                     copy_path: id == "markdown",
-                    pause_on_exit: id == "python",
+                    pause_on_exit: ["python", "rscript", "bash"].contains(&id),
                 },
             )
         })
@@ -164,15 +192,32 @@ impl Default for Config {
             gap: 6,
             label_width: 32,
             row_spacing: 1,
+            highlight_path: true,
             tmux_right: true,
             auto_english: true,
+            konsole_shortcuts: true,
+            tmux_extended_keys: true,
+            link_scan_limit: 10000,
+            link_results: 32,
             preview_bytes: 65536,
+            preview_lines: 5,
             dashboard_width: 36,
             search_results: 500,
             search_limit: 100000,
             folder_color: "#7dcfff".into(),
+            folder_colors: [
+                ("node_modules", "#98c379"),
+                (".git", "#c678dd"),
+                ("__pycache__", "#e5c07b"),
+                ("pycache", "#e5c07b"),
+            ]
+            .into_iter()
+            .map(|(name, color)| (name.into(), color.into()))
+            .collect(),
             file_color: "#c8d3df".into(),
             line_color: "#526779".into(),
+            link_color: "#4B0082".into(),
+            path_color: "#9cc5d1".into(),
             keys,
             openers,
             defaults: [
@@ -187,6 +232,8 @@ impl Default for Config {
             .map(|(a, b)| (a.into(), b.into()))
             .collect(),
             extension_colors: [
+                (".js", "#FFD700"),
+                (".mjs", "#FFD700"),
                 (".py", "#e5c07b"),
                 (".html", "#e06c75"),
                 (".png", "#c792ea"),
@@ -223,6 +270,19 @@ fn number(value: &Value, key: &str, low: usize, high: usize) -> Result<usize, St
         .ok_or_else(|| format!("{key}: 应为 {low}..{high} 的整数"))
 }
 impl Config {
+    pub fn dashboard_columns(&self, terminal_width: usize) -> usize {
+        if terminal_width < 70 {
+            0
+        } else {
+            self.dashboard_width.min(terminal_width - 38)
+        }
+    }
+    pub fn folder_color_for(&self, path: &Path) -> &str {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| self.folder_colors.get(name))
+            .unwrap_or(&self.folder_color)
+    }
     pub fn arrow_action(&self, key: &str) -> Option<&'static str> {
         match key {
             "up" => Some("up"),
@@ -233,7 +293,7 @@ impl Config {
         }
     }
     pub fn arrow_hint(&self) -> &'static str {
-        "↑↓ 同级 ← 父级 → 展开"
+        "↑↓ 同层循环 ← 父级 → 展开"
     }
     pub fn load(path: &Path) -> Result<Self, String> {
         if !path.exists() {
@@ -244,20 +304,25 @@ impl Config {
         let table = data.as_table().ok_or("配置应为 TOML 表")?;
         let mut conf = Self::default();
         for (section, values) in table {
+            if section == "gui" {
+                continue;
+            } // Ignore retired configuration.
             if ![
                 "browser",
                 "layout",
                 "preview",
                 "dashboard",
                 "search",
-                "gui",
                 "colors",
                 "keys",
                 "openers",
                 "open_defaults",
                 "extension_colors",
+                "folder_colors",
                 "tmux",
                 "input_method",
+                "links",
+                "terminal",
             ]
             .contains(&section.as_str())
             {
@@ -292,28 +357,43 @@ impl Config {
                         conf.label_width = number(value, key, 12, 120)?
                     }
                     ("layout", "row_spacing") => conf.row_spacing = number(value, key, 1, 4)?,
+                    ("layout", "highlight_path") => {
+                        conf.highlight_path = value.as_bool().ok_or("highlight_path 应为布尔值")?
+                    }
                     // Ignore retired options so existing user configurations still load.
                     ("layout", "orientation") | ("keys", "toggle_tree") => {}
+                    ("links", "scan_limit") => {
+                        conf.link_scan_limit = number(value, key, 1, 1000000)?
+                    }
+                    ("links", "max_results") => conf.link_results = number(value, key, 1, 1000)?,
+                    ("terminal", "tmux_extended_keys") => {
+                        conf.tmux_extended_keys =
+                            value.as_bool().ok_or("tmux_extended_keys 应为布尔值")?
+                    }
+                    ("terminal", "konsole_shortcuts") => {
+                        conf.konsole_shortcuts =
+                            value.as_bool().ok_or("konsole_shortcuts 应为布尔值")?
+                    }
                     ("input_method", "auto_english") => {
                         conf.auto_english = value.as_bool().ok_or("auto_english 应为布尔值")?;
                     }
                     ("tmux", "open_in_right_pane") => {
                         conf.tmux_right = value.as_bool().ok_or("open_in_right_pane 应为布尔值")?;
                     }
+                    ("preview", "preview_lines") => {
+                        conf.preview_lines = number(value, key, 0, 1000)?
+                    }
                     ("preview", "preview_bytes") => {
                         conf.preview_bytes = number(value, key, 1024, 1048576)?
                     }
                     ("dashboard", "dashboard_width") => {
-                        conf.dashboard_width = number(value, key, 28, 80)?
+                        conf.dashboard_width = number(value, key, 20, 240)?
                     }
                     ("search", "search_max_results") => {
                         conf.search_results = number(value, key, 1, 10000)?
                     }
                     ("search", "search_scan_limit") => {
                         conf.search_limit = number(value, key, 1, 10000000)?
-                    }
-                    ("gui", "gui_font_size") => {
-                        number(value, key, 8, 32)?;
                     }
                     ("colors", _) => {
                         if ![
@@ -323,12 +403,14 @@ impl Config {
                             "file_color",
                             "selected_color",
                             "line_color",
+                            "link_color",
+                            "path_color",
                         ]
                         .contains(&key.as_str())
                         {
                             return Err(format!("未知颜色选项: {key}"));
                         }
-                        let text = string(value, key)?;
+                        let text = string(value, key)?.trim().to_owned();
                         if !color(&text) {
                             return Err(format!("{key}: 应为 #RRGGBB"));
                         }
@@ -336,6 +418,8 @@ impl Config {
                             "folder_color" => conf.folder_color = text,
                             "file_color" => conf.file_color = text,
                             "line_color" => conf.line_color = text,
+                            "link_color" => conf.link_color = text,
+                            "path_color" => conf.path_color = text,
                             _ => {}
                         }
                     }
@@ -392,6 +476,19 @@ impl Config {
                         }
                         conf.openers.insert(key.clone(), opener);
                     }
+                    ("folder_colors", _) => {
+                        if key.is_empty()
+                            || key.contains('/')
+                            || [".", ".."].contains(&key.as_str())
+                        {
+                            return Err(format!("folder_colors.{key}: 应为目录名，不含路径"));
+                        }
+                        let text = string(value, key)?.trim().to_owned();
+                        if !color(&text) {
+                            return Err(format!("folder_colors.{key}: 应为 #RRGGBB"));
+                        }
+                        conf.folder_colors.insert(key.clone(), text);
+                    }
                     ("open_defaults" | "extension_colors", _) => {
                         if !["*", "", "<directory>"].contains(&key.as_str())
                             && (!key.starts_with('.') || key.contains('/'))
@@ -400,6 +497,7 @@ impl Config {
                         }
                         let text = string(value, key)?;
                         if section == "extension_colors" {
+                            let text = text.trim().to_owned();
                             if !color(&text) {
                                 return Err(format!("{key}: 应为 #RRGGBB"));
                             }
@@ -427,16 +525,51 @@ impl Config {
         if conf.keys.get("rename").map(String::as_str) == Some("R") {
             conf.keys.insert("rename".into(), "r".into());
         }
+        // Newly added defaults yield to existing custom bindings.
+        for (action, alternatives) in [
+            ("exit_here", &["z", "b", "t", "s", "Ctrl+Alt+x"][..]),
+            ("link_info", &["i", "B", "T", "Ctrl+Alt+i"][..]),
+            ("dashboard_narrow", &["{", "-", "Ctrl+Alt+b"][..]),
+            ("dashboard_widen", &["}", "+", "Ctrl+Alt+w"][..]),
+        ] {
+            if table
+                .get("keys")
+                .and_then(|keys| keys.get(action))
+                .is_none()
+            {
+                let occupied: std::collections::HashSet<_> = conf
+                    .keys
+                    .iter()
+                    .filter(|(name, _)| name.as_str() != action)
+                    .map(|(_, key)| key_code(key))
+                    .collect();
+                if occupied.contains(&key_code(&conf.keys[action]))
+                    && let Some(key) = alternatives
+                        .iter()
+                        .find(|key| !occupied.contains(&key_code(key)))
+                {
+                    conf.keys.insert(action.into(), (*key).into());
+                }
+            }
+        }
         let mut used = std::collections::HashSet::new();
         if conf.keys.get("parent").map(String::as_str) == Some("u") {
             conf.keys.insert("parent".into(), "Left".into());
         }
         for (action, key) in &conf.keys {
             let code = key_code(key);
-            let ctrl_alt = code.len() == 10
-                && code.starts_with("ctrl+alt+")
-                && code.as_bytes()[9].is_ascii_alphabetic();
-            if (code.chars().count() != 1 && !(action == "parent" && code == "left") && !ctrl_alt)
+            let named_control =
+                ["ctrl+alt+", "ctrl+shift+", "ctrl+alt+shift+"]
+                    .iter()
+                    .any(|prefix| {
+                        code.len() == prefix.len() + 1
+                            && code.starts_with(prefix)
+                            && code.as_bytes()[prefix.len()].is_ascii_alphabetic()
+                    });
+            if (code.chars().count() != 1
+                && !(action == "parent" && code == "left")
+                && !(action == "refresh" && code == "ctrl+f5")
+                && !named_control)
                 || (code == *key && key.chars().any(char::is_control))
                 || [
                     "\n", "\r", "\t", " ", "\x1b", "\x03", "\x15", "\x13", "\x11", "\x1a", "H",
@@ -451,6 +584,8 @@ impl Config {
                 || code == "left" && action != "parent"
                 || code == "R" && action != "rename"
                 || code == "ctrl+alt+c" && action != "copy_path"
+                || code == "\x0e" && action != "new_file"
+                || code == "ctrl+shift+n" && action != "new_folder"
             {
                 return Err(
                     "Ctrl+F / Ctrl+L / Shift+R / Ctrl+Alt+C 保留给搜索 / 路径 / 重命名 / 复制路径"
@@ -469,6 +604,15 @@ impl Config {
         Ok(conf)
     }
     pub fn action(&self, key: &str) -> Option<&str> {
+        if key == "ctrl+f5" {
+            return Some("refresh");
+        }
+        if key == "\x0e" {
+            return Some("new_file");
+        }
+        if key == "ctrl+shift+n" {
+            return Some("new_folder");
+        }
         if key == "R" {
             return Some("rename");
         }

@@ -34,6 +34,7 @@ class Node:
     parent: "Node | None" = None
     is_dir: bool = False
     symlink: bool = False
+    links: int = 1
     expanded: bool = False
     children: list = field(default_factory=list)
     error: str = ""
@@ -42,8 +43,30 @@ class Node:
     @property
     def label(self):
         prefix = "▾ " if self.is_dir and self.expanded else "▸ " if self.is_dir else "· "
-        suffix = " ↗" if self.symlink else ""
+        suffix = (" ↗" if self.symlink else "") + (f" H×{self.links}" if not self.is_dir and self.links > 1 else "")
         return prefix + (self.path.name or str(self.path)) + suffix
+
+    def display_label(self, width):
+        return self.label_parts(width)[0]
+
+    def label_parts(self, width):
+        prefix = "▾ " if self.is_dir and self.expanded else "▸ " if self.is_dir else "· "
+        name = safe_text(self.path.name or str(self.path))
+        if self.symlink:
+            try:
+                target = Path(os.readlink(self.path))
+                target_name = safe_text(target.name or str(target))
+                available = max(0, width - cell_width(prefix) - 6)
+                target_width = min(cell_width(target_name), available // 2)
+                head = prefix + shorten(name, max(0, available - target_width))
+                tail = shorten(target_name, max(0, width - cell_width(head) - 6))
+                return head + "------" + tail, len(head)
+            except OSError:
+                pass
+        suffix = (" ↗" if self.symlink else "") + (f" H×{self.links}" if not self.is_dir and self.links > 1 else "")
+        name = shorten(name, max(0, width - cell_width(prefix + suffix)))
+        return shorten(prefix + name + suffix, width), None
+
 
 
 class Browser:
@@ -100,11 +123,11 @@ class Browser:
                         link = entry.is_symlink()
                         directory = entry.is_dir(follow_symlinks=False)
                         info = entry.stat(follow_symlinks=False)
-                        entries.append((entry.name, directory, link, info.st_size, info.st_mtime))
+                        entries.append((entry.name, directory, link, info.st_size, info.st_mtime, info.st_nlink))
                     except OSError:
-                        entries.append((entry.name, False, entry.is_symlink(), 0, 0))
+                        entries.append((entry.name, False, entry.is_symlink(), 0, 0, 1))
             def key(entry):
-                name, directory, _, size, modified = entry
+                name, directory, _, size, modified, _ = entry
                 value = name.casefold() if self.config.sort == "name" else -size if self.config.sort == "size" else -modified
                 return (not directory if self.config.directories_first else False, value, name)
             entries.sort(key=key)
@@ -112,11 +135,11 @@ class Browser:
             node.children = []
             chosen = entries[:self.config.max_entries]
             chosen += [e for e in entries[self.config.max_entries:] if node.path / e[0] in self._pinned or old.get(node.path / e[0], Node(node.path / e[0])).expanded]
-            for name, directory, link, _, _ in chosen:
+            for name, directory, link, _, _, links in chosen:
                 path = node.path / name
                 child = self._nodes.setdefault(path, Node(path, node, directory, link))
                 child.parent = node
-                child.is_dir, child.symlink = directory, link
+                child.is_dir, child.symlink, child.links = directory, link, links
                 if not directory or link:
                     child.expanded = False
                     child.children = []
@@ -154,10 +177,18 @@ class Browser:
         self.refresh()
 
     def step(self, direction):
-        if not self.selected.parent:
-            return
-        nodes = self.selected.parent.children
-        self.selected = nodes[max(0, min(len(nodes) - 1, nodes.index(self.selected) + direction))]
+        depth, ancestor = 0, self.selected
+        while ancestor.parent:
+            ancestor, depth = ancestor.parent, depth + 1
+        nodes, stack = [], [(self.root, 0)]
+        while stack:
+            node, level = stack.pop()
+            if level == depth:
+                nodes.append(node)
+            elif level < depth and node.expanded:
+                stack.extend((child, level + 1) for child in reversed(node.children))
+        if nodes:
+            self.selected = nodes[(nodes.index(self.selected) + direction) % len(nodes)]
 
     def right(self):
         node = self.selected

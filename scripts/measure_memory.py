@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def measure(root, actions):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 140, 0, 0))
-    process = subprocess.Popen([str(ROOT / "filex.sh"), str(root), "--config", str(ROOT / "fileX.conf")], stdin=slave, stdout=slave, stderr=slave, env={**os.environ, "TERM": "xterm-256color"})
+    process = subprocess.Popen([str(ROOT / "filex.sh"), str(root), "--config", str(ROOT / "fileX.example.conf")], stdin=slave, stdout=slave, stderr=slave, env={**{k: v for k, v in os.environ.items() if not k.startswith("KONSOLE_DBUS_") and k not in ("TMUX", "TMUX_PANE", "NO_COLOR")}, "TERM": "xterm-256color"})
     os.close(slave)
     observed_rss = peak = 0
     output = bytearray()
@@ -76,10 +76,26 @@ with tempfile.TemporaryDirectory(prefix="filex-memory-") as directory:
         folder.mkdir()
         for j in range(120):
             (folder / f"needle_B{i:03d}_I{j:03d}.txt").touch()
-    report = {"version": "1.4.0", "binary_sha256": hashlib.sha256((ROOT / "target/release/filex").read_bytes()).hexdigest(), "date": time.strftime("%Y-%m-%d"), "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications", "settings": {"max_entries": 1000, "max_loaded_nodes": 6000, "max_expand_nodes": 5000}, "scenarios": {
-        "project_root": measure(ROOT, ["q", "E", "C", "\x12"]),
+    soft = temp / "symlinks-7200"
+    soft.mkdir()
+    (soft / "target.txt").write_text("symlink target\n")
+    for i in range(60):
+        folder = soft / f"branch{i:03d}"
+        folder.mkdir()
+        for j in range(120):
+            (folder / f"soft_B{i:03d}_I{j:03d}.js").symlink_to("../target.txt")
+    linked = temp / "hard-links-2400"
+    linked.mkdir()
+    anchor = linked / "anchor.js"
+    anchor.write_text("const test = 1;\nconsole.log(test);\n")
+    for i in range(2400):
+        os.link(anchor, linked / f"hard{i:04d}.mjs")
+    report = {"version": "1.5.0", "binary_sha256": hashlib.sha256((ROOT / "target/release/filex").read_bytes()).hexdigest(), "date": time.strftime("%Y-%m-%d"), "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications", "settings": {"max_entries": 1000, "max_loaded_nodes": 6000, "max_expand_nodes": 5000}, "scenarios": {
+        "symlinks_7200": measure(soft, ["E", "q", "\x06soft_B059_I119\r", "k", "j", "I", "\x1b", "\x12"]),
+        "hard_links_2400": measure(linked, ["\x1b[C", "q", "I", "\x1b", "\x06hard2399\r", "\x12"]),
+        "project_root": measure(ROOT, ["q", "]" * 12, "[" * 12, "E", "C", "\x12"]),
         "flat_20000_files": measure(flat, ["q", "\x06文件_19999\r", "p", "\x1b", "\x1b[D", "\x1b[D", "\x1b[D", "\x12"]),
-        "branches_7200_files": measure(branches, ["E", "q", "\x06needle_B059_I119\r", "\x1b[D", "\x1b[D", "\x1b[D", "\x12"]),
+        "branches_7200_files": measure(branches, ["E", "q", "\x06needle_B059_I119\r", "k", "j", "\x1b[D", "\x1b[D", "\x1b[D", "\x12"]),
     }}
     destination = ROOT / "memory-validation.json"
     destination.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")

@@ -22,6 +22,7 @@ class TmuxTests(unittest.TestCase):
             (root / "a-folder").mkdir()
             (root / "a-folder/child.txt").write_text("child")
             (root / "b-folder").mkdir()
+            (root / "b-folder/b-child.txt").write_text("other parent")
             right_cwd = root / ".right-work"
             right_cwd.mkdir()
             path = root / "literal ' ; $(touch INJECTED).txt"
@@ -46,7 +47,7 @@ class TmuxTests(unittest.TestCase):
             subprocess.run([sys.executable, str(ROOT / "scripts/install_alias.py"), "--rc", str(rc)],
                            check=True, capture_output=True)
             socket = "filex-test-" + uuid.uuid4().hex
-            env = {**os.environ}
+            env = {k: v for k, v in os.environ.items() if not k.startswith("KONSOLE_DBUS_")}
             env.pop("TMUX", None)
             env.pop("TMUX_PANE", None)
 
@@ -71,6 +72,9 @@ class TmuxTests(unittest.TestCase):
             def rows():
                 return [json.loads(line) for line in records.read_text().splitlines()] if records.exists() else []
 
+            focus_client = None
+            focus_fd = None
+            stop_focus = None
             try:
                 source = tmux("-f", "/dev/null", "new-session", "-d", "-s", "fixture", "-x", "180", "-y", "36",
                               "-c", str(root), "-P", "-F", "#{pane_id}",
@@ -78,10 +82,46 @@ class TmuxTests(unittest.TestCase):
                 right = tmux("split-window", "-h", "-t", source, "-c", str(right_cwd), "-P", "-F", "#{pane_id}",
                              "/usr/bin/bash", "--noprofile", "--rcfile", str(rc), "-i")
                 wait(lambda: "filex-test$" in screen(right))
+                original_keys = tmux("show-options", "-s", "-v", "extended-keys")
+                original_focus = tmux("show-options", "-s", "-v", "focus-events")
+                original_format = tmux("show-options", "-s", "-v", "extended-keys-format")
                 send(source, "filex --config " + shlex.quote(str(config)))
                 tmux("send-keys", "-t", source, "Enter")
                 wait(lambda: screen(source).splitlines()[0].strip() == "filex")
                 self.assertEqual(tmux("display-message", "-p", "-t", source, "#{pane_current_path}"), str(root))
+                (root / "ctrl-f5-probe.txt").write_text("externally created")
+                self.assertNotIn("ctrl-f5-probe.txt", screen(source))
+                tmux("send-keys", "-t", source, "C-F5")
+                wait(lambda: "ctrl-f5-probe.txt" in screen(source))
+                tmux("send-keys", "-t", source, "C-n")
+                send(source, "new-file.txt")
+                tmux("send-keys", "-t", source, "Enter")
+                wait(lambda: (root / "new-file.txt").exists())
+                tmux("send-keys", "-t", source, "C-S-n")
+                send(source, "new-folder")
+                tmux("send-keys", "-t", source, "Enter")
+                wait(lambda: (root / "new-folder").is_dir())
+                # Return to root for sibling navigation checks.
+                tmux("send-keys", "-t", source, "Left")
+                self.assertEqual(tmux("show-options", "-s", "-v", "extended-keys-format"), "csi-u")
+                self.assertEqual(tmux("show-options", "-s", "-v", "focus-events"), "on")
+                import pty, fcntl, struct, termios, select, threading
+                focus_fd, slave = pty.openpty()
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH",36,180,0,0))
+                focus_client = subprocess.Popen(["tmux","-L",socket,"attach-session","-t","fixture"],env=env,stdin=slave,stdout=slave,stderr=slave)
+                os.close(slave)
+                stop_focus = threading.Event()
+                def drain_focus():
+                    while not stop_focus.is_set():
+                        if select.select([focus_fd],[],[],.02)[0]:
+                            try: os.read(focus_fd,65536)
+                            except OSError: return
+                threading.Thread(target=drain_focus,daemon=True).start()
+                other_window = tmux("new-window","-d","-t","fixture","-P","-F","#{window_id}","sleep 120").strip()
+                source_window = tmux("display-message","-p","-t",source,"#{window_id}").strip()
+                for _ in range(5):
+                    tmux("select-window","-t",other_window); time.sleep(.06)
+                    tmux("select-window","-t",source_window); time.sleep(.06)
                 # Root up/down stay at root; enter a sibling level only with Right.
                 tmux("send-keys", "-t", source, "Down", "Right")
                 time.sleep(.1)
@@ -90,7 +130,15 @@ class TmuxTests(unittest.TestCase):
                 tmux("send-keys", "-t", source, "Down")
                 time.sleep(.1)
                 self.assertIn(str(root / "b-folder"), screen(source))
+                send(source, "E")
+                time.sleep(.1)
                 tmux("send-keys", "-t", source, "Up", "Right")
+                time.sleep(.1)
+                self.assertIn(str(root / "a-folder/child.txt"), screen(source))
+                tmux("send-keys", "-t", source, "Up")
+                time.sleep(.1)
+                self.assertIn(str(root / "b-folder/b-child.txt"), screen(source))
+                tmux("send-keys", "-t", source, "Down")
                 time.sleep(.1)
                 self.assertIn(str(root / "a-folder/child.txt"), screen(source))
                 tmux("send-keys", "-t", source, "Left")
@@ -126,9 +174,21 @@ class TmuxTests(unittest.TestCase):
                 time.sleep(1.3)
                 tmux("resize-window", "-t", source, "-x", "110", "-y", "16")
                 time.sleep(.1)
-                send(source, "Q")
+                tmux("send-keys", "-t", source, "C-f", "C-u")
+                send(source, "a-folder")
+                tmux("send-keys", "-t", source, "Enter")
+                time.sleep(.15)
+                send(source, "x")
                 wait(lambda: tmux("display-message", "-p", "-t", source, "#{pane_current_command}") == "bash")
+                self.assertEqual(tmux("display-message", "-p", "-t", source, "#{pane_current_path}"), str(root / "a-folder"))
+                self.assertEqual(tmux("show-options", "-s", "-v", "focus-events"), original_focus)
+                self.assertEqual(tmux("show-options", "-s", "-v", "extended-keys"), original_keys)
+                self.assertEqual(tmux("show-options", "-s", "-v", "extended-keys-format"), original_format)
             finally:
+                if stop_focus: stop_focus.set()
+                if focus_client:
+                    focus_client.terminate(); focus_client.wait(timeout=3)
+                if focus_fd is not None: os.close(focus_fd)
                 subprocess.run(["tmux", "-L", socket, "kill-server"], env=env, capture_output=True)
 
 

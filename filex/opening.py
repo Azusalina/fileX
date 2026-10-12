@@ -26,18 +26,9 @@ def prepare_open(path, config, method):
     return command, opener["terminal"]
 
 
-def launch_open(path, config, method, gui=False):
+def launch_open(path, config, method):
     command, terminal = prepare_open(path, config, method)
     if config.openers[method].get("copy_path", False):
-        if gui:
-            from PySide6.QtWidgets import QApplication
-            QApplication.clipboard().setText(str(Path(path).absolute()))
-        else:
-            from .clipboard import copy_path
-            copy_path(path)
-    if terminal and gui:
-        executable = shutil.which("konsole")
-        if not executable:
-            raise RuntimeError("GUI 打开终端编辑器需要 Konsole")
-        command = [executable, *(["--hold"] if config.openers[method].get("pause_on_exit", False) else []), "-e", *command]
-    return subprocess.Popen(command, cwd=(Path(path) if Path(path).is_dir() else Path(path).absolute().parent) if terminal else None, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        from .clipboard import copy_path
+        copy_path(path)
+    return subprocess.Popen(command, env={k:v for k,v in os.environ.items() if k != "FILEX_CWD_FILE"}, cwd=(Path(path) if Path(path).is_dir() else Path(path).absolute().parent) if terminal else None, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)

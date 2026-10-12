@@ -4,8 +4,8 @@ import subprocess
 from pathlib import Path
 from .actions import ARG_LABELS, perform
 from .core import cell_width, preview, safe_text, shorten
-from .config import config_path, load_config, key_map, display_color, navigation_keys, navigation_hint
-from .details import metadata, metadata_text
+from .config import config_path, load_config, key_map, display_color, dashboard_columns, navigation_keys, navigation_hint
+from .details import metadata, metadata_text, dashboard_text
 from .opening import default_opener, opener_choices, prepare_open, launch_open
 from .layout import Layout
 
@@ -76,7 +76,7 @@ class Terminal:
             self.screen.refresh()
             return
         body_height = height - 5
-        panel_width = min(self.browser.config.dashboard_width, width // 2) if self.dashboard and width >= 70 else 0
+        panel_width = dashboard_columns(self.browser.config, width) if self.dashboard and width >= 70 else 0
         tree_width = width - panel_width - (2 if panel_width else 0)
         self.layout = Layout(self.browser)
         selected = self.layout.by_node[self.browser.selected]
@@ -93,7 +93,7 @@ class Terminal:
         self.left = max(0, min(self.left, max(0, self.layout.width - tree_width + 2)))
         self.top = max(0, min(self.top, max(0, self.layout.height - body_height)))
         self.put(0, 1, "filex", curses.A_BOLD)
-        self.put(1, 1, str(self.browser.root.path), self.color(self.browser.config.folder_color))
+        self.put(1, 1, str(self.browser.root.path), self.color(display_color(self.browser.root, self.browser.config)))
         for (x, y), char in self.layout.line_cells(self.left, self.top, tree_width - 2, body_height).items():
             self.put(y - self.top + 3, x - self.left + 1, char, self.color(self.browser.config.line_color))
         for item in self.layout.placements:
@@ -106,12 +106,17 @@ class Terminal:
                 attr |= curses.A_REVERSE
             x = item.x - self.left + 1
             self.put(item.y - self.top + 3, x, item.label, attr, max(0, tree_width - max(0, x) - 1))
+            if item.link_start is not None:
+                start = item.link_start
+                link_x = x + cell_width(item.label[:start])
+                link_attr = self.color(self.browser.config.link_color) | curses.A_BOLD
+                self.put(item.y - self.top + 3, link_x, item.label[start:], link_attr, max(0, tree_width - max(0, link_x) - 1))
         if panel_width:
             for y in range(3, height - 2):
                 self.put(y, tree_width, "│", self.color(self.browser.config.line_color))
             path = self.browser.selected.path
             if path != self.metadata_path:
-                self.metadata_value = metadata_text(metadata(path))
+                self.metadata_value = dashboard_text(path, self.browser.root.path, self.browser.config)
                 self.metadata_path = path
             self.put(3, tree_width + 2, "Dashboard · q 收起", curses.A_BOLD, panel_width - 2)
             for offset, line in enumerate(self.metadata_value.splitlines()[:max(0, body_height - 1)]):
@@ -152,6 +157,18 @@ class Terminal:
                 text = ""
             elif isinstance(key, str) and key.isprintable():
                 text += key
+
+    def confirm(self, title):
+        while True:
+            self.draw()
+            height, width = self.screen.getmaxyx()
+            self.screen.move(height - 2, 0); self.screen.clrtoeol()
+            self.put(height - 2, 0, title)
+            self.put(height - 1, 0, "再次按 Enter 确认 · Esc 取消")
+            self.screen.refresh()
+            key = self.screen.get_wch()
+            if key in ("\n", "\r", curses.KEY_ENTER): return True
+            if key in ("\x1b", "\x03"): return False
 
     def pager(self, title, content):
         rows = content.splitlines()
@@ -214,7 +231,7 @@ class Terminal:
             curses.def_prog_mode()
             curses.endwin()
             try:
-                result = subprocess.run(command, check=False, cwd=path if path.is_dir() else path.parent)
+                result = subprocess.run(command, check=False, env={k:v for k,v in os.environ.items() if k != "FILEX_CWD_FILE"}, cwd=path if path.is_dir() else path.parent)
                 if self.browser.config.openers[method].get("pause_on_exit", False):
                     input(f"程序结束 ({result.returncode}) · 按 Enter 返回 filex")
             finally:
@@ -267,7 +284,7 @@ class Terminal:
                 action = "search"
             elif key == "\x0c":
                 action = "goto"
-            elif key == curses.KEY_F5:
+            elif key in (curses.KEY_F5, curses.KEY_F29):
                 action = "refresh"
             elif key == curses.KEY_DC:
                 action = "trash"
@@ -288,11 +305,24 @@ class Terminal:
             try:
                 if action == "quit":
                     return
+                if action == "exit_here":
+                    from .shell import exit_directory
+                    exit_directory(self.browser.selected.path)
+                    return
                 if action == "dashboard":
                     self.dashboard = not self.dashboard
                     self.metadata_path = None
                     if self.dashboard and self.screen.getmaxyx()[1] < 70:
                         self.message = "右侧 Dashboard 需要至少 70 列的终端"
+                elif action in {"dashboard_narrow", "dashboard_widen"}:
+                    width = self.screen.getmaxyx()[1]
+                    if width < 70:
+                        self.message = "Dashboard 需要至少 70 列"
+                    else:
+                        current = dashboard_columns(self.browser.config, width)
+                        self.browser.config.dashboard_width = min(min(width - 38, 240), max(20, current + (-4 if action == "dashboard_narrow" else 4)))
+                        self.dashboard = True
+                        self.message = f"信息面板宽度: {self.browser.config.dashboard_width} 列"
                 elif action == "down":
                     self.browser.step(1)
                 elif action == "up":
@@ -319,6 +349,8 @@ class Terminal:
                     self.open_method(default_opener(self.browser.selected, self.browser.config))
                 elif action == "open_with" or key in ("\n", "\r", curses.KEY_ENTER):
                     self.choose_open()
+                elif action == "link_info":
+                    self.pager("文件 / 链接信息", dashboard_text(self.browser.selected.path, self.browser.root.path, self.browser.config))
                 elif action == "preview":
                     self.pager(str(self.browser.selected.path), preview(self.browser.selected.path, self.browser.config.preview_bytes))
                 elif action == "parent":
@@ -357,8 +389,7 @@ class Terminal:
                         result = perform(self.browser, action, value)
                         self.message = f"完成: {result}"
                 elif action == "trash":
-                    value = self.prompt(f"送入回收站 {self.browser.selected.path}？输入 YES 确认")
-                    if value == "YES":
+                    if self.confirm(f"送入回收站 {self.browser.selected.path}？"):
                         perform(self.browser, "trash")
                         self.message = "已送入回收站；可在 Dolphin 中恢复"
                 elif action == "config":
@@ -368,8 +399,8 @@ class Terminal:
                     self.metadata_path = None
                     self.message = f"配置已重新读取: {path}"
                 elif action == "help":
-                    entries = {"quit": "退出", "dashboard": "右侧创建 / 修改时间 / 大小", "expand": "展开 / 进入子节点", "collapse": "只收起选中目录", "expand_all": "展开选中目录全部分支", "collapse_all": "收起选中目录全部分支", "down": "下一个同级节点", "up": "上一个同级节点", "open": "按扩展名默认程序打开", "open_with": "选择打开程序（也可 Enter）", "preview": "文本预览", "hidden": "隐藏文件开关", "refresh": "刷新", "search": "递归搜索文件 / 目录名", "next_match": "下一个匹配", "previous_match": "上一个匹配", "goto": "更换根目录", "parent": "返回父级 / 引入上级根目录", "focus_root": "当前目录设为根并刷新", "new_file": "新建文件", "new_folder": "新建目录", "rename": "重命名", "copy": "复制", "copy_path": "复制绝对路径", "move": "移动", "trash": "送入回收站（确认）", "help": "帮助", "config": "重新读取配置"}
-                    self.pager("fileX 快捷键", "\n".join(f"{self.browser.config.keys[a]}    {label}" for a, label in entries.items()) + "\n\nCtrl+F / /    搜索\nEnter    选择打开程序\nH / L    横向平移\nPgUp / PgDn    翻页\nHome / End    首末节点\nEsc    取消输入 / 清除搜索\nCtrl+U    清空输入\n\n复制 / 移动填写完整目标路径，不会覆盖已有目标。\n扩展名配色同时用于 TUI / GUI，终端会近似为可用颜色。")
+                    entries = {"quit": "退出", "exit_here": "退出并将 terminal 切到选中目录", "dashboard": "右侧创建 / 修改时间 / 大小 / 链接", "link_info": "完整文件 / 链接信息", "expand": "展开 / 进入子节点", "collapse": "只收起选中目录", "expand_all": "展开选中目录全部分支", "collapse_all": "收起选中目录全部分支", "down": "下一个同级节点", "up": "上一个同级节点", "open": "按扩展名默认程序打开", "open_with": "选择打开程序（也可 Enter）", "preview": "文本预览", "hidden": "隐藏文件开关", "refresh": "刷新", "search": "递归搜索文件 / 目录名", "next_match": "下一个匹配", "previous_match": "上一个匹配", "goto": "更换根目录", "parent": "返回父级 / 引入上级根目录", "focus_root": "当前目录设为根并刷新", "new_file": "新建文件", "new_folder": "新建目录", "rename": "重命名", "copy": "复制", "copy_path": "复制绝对路径", "move": "移动", "trash": "送入回收站（确认）", "help": "帮助", "config": "重新读取配置"}
+                    self.pager("fileX 快捷键", "\n".join(f"{self.browser.config.keys[a]}    {label}" for a, label in entries.items()) + "\n\nCtrl+N / Ctrl+Shift+N    新建文件 / 目录\nCtrl+F / /    搜索\nEnter    选择打开程序\nH / L    横向平移\nPgUp / PgDn    翻页\nHome / End    首末节点\nEsc    取消输入 / 清除搜索\nCtrl+U    清空输入\n\n复制 / 移动填写完整目标路径，不会覆盖已有目标。\n扩展名配色用于 TUI，终端会近似为可用颜色。")
             except (OSError, ValueError, RuntimeError) as exc:
                 self.message = f"操作失败: {safe_text(exc)}"
             except Exception as exc:

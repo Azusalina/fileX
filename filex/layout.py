@@ -8,6 +8,7 @@ class Placement:
     x: int
     y: int
     label: str
+    link_start: int | None = None
 
 
 class Layout:
@@ -15,11 +16,11 @@ class Layout:
     def __init__(self, browser):
         nodes = browser.visible()
         config = browser.config
-        depths, labels, widths = {}, {}, {}
+        depths, labels, widths, link_starts = {}, {}, {}, {}
         for node in nodes:
             depth = depths[node.parent] + 1 if node.parent else 0
             depths[node] = depth
-            labels[node] = shorten(node.label, config.max_label_width)
+            labels[node], link_starts[node] = node.label_parts(config.max_label_width)
             widths[depth] = max(widths.get(depth, 0), cell_width(labels[node]))
         columns = {0: 0}
         for depth in range(1, max(widths) + 1):
@@ -31,7 +32,7 @@ class Layout:
         self.placements = []
         self.by_node = {}
         for node in nodes:
-            placement = Placement(node, columns[depths[node]], rows[node], labels[node])
+            placement = Placement(node, columns[depths[node]], rows[node], labels[node], link_starts[node])
             self.placements.append(placement)
             self.by_node[node] = placement
             if node.expanded:

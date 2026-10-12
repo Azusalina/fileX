@@ -9,9 +9,12 @@ use std::{
     os::unix::{
         ffi::OsStrExt,
         fs::{MetadataExt, symlink},
+        io::AsRawFd,
     },
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -245,7 +248,7 @@ fn date(seconds: i64) -> String {
     };
     String::from_utf8_lossy(&buffer[..length]).into_owned()
 }
-pub fn metadata(path: &Path) -> String {
+pub fn metadata(path: &Path, root: &Path, conf: &Config) -> String {
     let read = || -> Result<String, String> {
         let info = fs::symlink_metadata(path).map_err(err)?;
         let name = cname(path)?;
@@ -279,7 +282,7 @@ pub fn metadata(path: &Path) -> String {
             ""
         };
         Ok(format!(
-            "{}\n{kind}\n\nCreated / 创建时间\n{created}\n\nModified / 修改时间\n{}\n\nSize / 大小\n{} bytes\n{note}\n\nPath / 路径\n{}",
+            "{}\n{kind}\n\nCreated / 创建时间\n{created}\n\nModified / 修改时间\n{}\n\nSize / 大小\n{} bytes\n{note}\n\n{}\nPath / 路径\n{}",
             clean(
                 &path
                     .file_name()
@@ -288,6 +291,7 @@ pub fn metadata(path: &Path) -> String {
             ),
             date(info.mtime()),
             info.len(),
+            crate::links::details(path, root, &info, conf),
             clean(&path.to_string_lossy())
         ))
     };
@@ -317,7 +321,7 @@ pub fn open_command(path: &Path, conf: &Config, method: &str) -> Result<(Command
         return Err(format!("程序未安装: {}", args[0]));
     }
     let mut command = Command::new(&args[0]);
-    command.args(&args[1..]);
+    command.args(&args[1..]).env_remove("FILEX_CWD_FILE");
     if opener.terminal {
         command.current_dir(if path.is_dir() {
             path
@@ -349,12 +353,132 @@ pub fn copy_path(path: &Path) -> Result<(), String> {
         .take()
         .unwrap()
         .write_all(absolute.as_os_str().as_bytes());
-    let output = child.wait_with_output().map_err(err)?;
-    if !output.status.success() {
-        return Err(format!(
-            "复制路径失败: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
+    // wl-copy daemonizes; its clipboard owner inherits stderr. Waiting for EOF
+    // would block until somebody replaces the clipboard, even after success.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(err)? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("复制路径超时，请检查 Wayland 剪贴板服务".into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    if !status.success() {
+        let mut errors = String::new();
+        if let Some(mut stderr) = child.stderr.take() {
+            nonblocking(&stderr)?;
+            drain_pipe(&mut stderr, &mut errors);
+        }
+        return Err(format!("复制路径失败: {}", errors.trim()));
     }
     written.map_err(err)
+}
+
+/// Communicate a NUL-terminated pathname to the waiting shell function.
+pub fn exit_directory(path: &Path) -> Result<PathBuf, String> {
+    fs::symlink_metadata(path).map_err(err)?;
+    let directory = if path.is_dir() {
+        path
+    } else {
+        path.parent().ok_or("无法找到所在目录")?
+    };
+    if !directory.is_dir() {
+        return Err("目标目录已移除或不可访问".into());
+    }
+    let directory = std::path::absolute(directory).map_err(err)?;
+    if let Some(target) = std::env::var_os("FILEX_CWD_FILE") {
+        let mut output = directory.as_os_str().as_bytes().to_vec();
+        output.push(0);
+        fs::write(target, output).map_err(err)?;
+    }
+    Ok(directory)
+}
+
+fn nonblocking(stream: &impl AsRawFd) -> Result<(), String> {
+    let fd = stream.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(err(io::Error::last_os_error()));
+    }
+    Ok(())
+}
+fn drain_pipe(stream: &mut impl Read, output: &mut String) {
+    let mut bytes = [0; 2048];
+    while output.len() < 16384 {
+        match stream.read(&mut bytes) {
+            Ok(0) | Err(_) => break,
+            Ok(count) => output.push_str(&String::from_utf8_lossy(&bytes[..count])),
+        }
+    }
+}
+/// The bundled adapter prints its URL only after server and browser startup.
+pub fn start_markdown(command: &mut Command) -> Result<String, String> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(err)?;
+    let mut stdout = child.stdout.take().ok_or("Markdown 没有启动输出")?;
+    let mut stderr = child.stderr.take().ok_or("Markdown 没有错误输出")?;
+    nonblocking(&stdout)?;
+    nonblocking(&stderr)?;
+    let mut output = String::new();
+    let mut errors = String::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        drain_pipe(&mut stdout, &mut output);
+        drain_pipe(&mut stderr, &mut errors);
+        if let Some(url) = output
+            .lines()
+            .find(|line| line.starts_with("http://127.0.0.1:"))
+        {
+            return Ok(url.to_owned());
+        }
+        if let Some(status) = child.try_wait().map_err(err)? {
+            drain_pipe(&mut stderr, &mut errors);
+            return Err(format!("Markdown 启动失败 ({status}): {}", errors.trim()));
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("Markdown 启动超时: {}", errors.trim()));
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Dashboard text with a bounded text head; I opens the same content in a pager.
+pub fn dashboard(path: &Path, root: &Path, conf: &Config) -> String {
+    let metadata = metadata(path, root, conf);
+    let compact = metadata
+        .lines()
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if conf.preview_lines == 0 || !fs::symlink_metadata(path).is_ok_and(|info| info.is_file()) {
+        return compact;
+    }
+    let preview = preview(path, conf.preview_bytes);
+    let body = preview
+        .split_once("\n\n")
+        .map_or(preview.as_str(), |(_, body)| body);
+    let lines = body
+        .lines()
+        .take(conf.preview_lines)
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "Preview / 前 {} 行\n{}\n\n{compact}",
+        conf.preview_lines,
+        if lines.is_empty() {
+            "（空文件）"
+        } else {
+            &lines
+        }
+    )
 }

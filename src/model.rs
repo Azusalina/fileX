@@ -2,7 +2,7 @@ use crate::config::{Config, expand_home};
 use std::{
     cell::RefCell,
     cmp::Ordering,
-    collections::{BinaryHeap, HashMap},
+    collections::{BinaryHeap, HashMap, HashSet},
     fs,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
@@ -15,6 +15,7 @@ pub struct Node {
     pub parent: Weak<RefCell<Node>>,
     pub dir: bool,
     pub link: bool,
+    pub links: u64,
     pub expanded: bool,
     pub children: Vec<NodeRef>,
     pub error: String,
@@ -27,28 +28,60 @@ impl Node {
             parent,
             dir,
             link,
+            links: 1,
             expanded: false,
             children: vec![],
             error: String::new(),
             omitted: 0,
         }))
     }
-    pub fn label(&self) -> String {
-        format!(
-            "{} {}{}",
-            if self.dir {
-                if self.expanded { "▾" } else { "▸" }
-            } else {
-                "·"
-            },
-            clean(
-                &self
-                    .path
+    pub fn label(&self, width: usize) -> (String, Option<usize>) {
+        let prefix = if self.dir {
+            if self.expanded { "▾ " } else { "▸ " }
+        } else {
+            "· "
+        };
+        let mut suffix = if self.link {
+            " ↗".to_owned()
+        } else {
+            String::new()
+        };
+        if !self.dir && self.links > 1 {
+            suffix.push_str(&format!(" H×{}", self.links));
+        }
+        let name = clean(
+            &self
+                .path
+                .file_name()
+                .unwrap_or(self.path.as_os_str())
+                .to_string_lossy(),
+        );
+        if self.link
+            && let Ok(target) = fs::read_link(&self.path)
+        {
+            let target = clean(
+                &target
                     .file_name()
-                    .unwrap_or(self.path.as_os_str())
-                    .to_string_lossy()
+                    .unwrap_or(target.as_os_str())
+                    .to_string_lossy(),
+            );
+            let available = width.saturating_sub(prefix.width() + 6);
+            let target_width = target.width().min(available / 2);
+            let head = format!(
+                "{prefix}{}",
+                clip(&name, available.saturating_sub(target_width))
+            );
+            let start = head.len();
+            let tail = clip(&target, width.saturating_sub(head.width() + 6));
+            return (format!("{head}------{tail}"), Some(start));
+        }
+        let available = width.saturating_sub(prefix.width() + suffix.width());
+        (
+            clip(
+                &format!("{prefix}{}{suffix}", clip(&name, available)),
+                width,
             ),
-            if self.link { " ↗" } else { "" }
+            None,
         )
     }
 }
@@ -84,6 +117,7 @@ struct Entry {
     path: PathBuf,
     dir: bool,
     link: bool,
+    links: u64,
 }
 impl Ord for Entry {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -201,6 +235,7 @@ impl Browser {
                 path,
                 dir,
                 link,
+                links: info.as_ref().map_or(1, |m| m.nlink()),
             };
             if force == Some(entry.path.as_path())
                 || old.get(&entry.path).is_some_and(|n| n.borrow().expanded)
@@ -232,6 +267,7 @@ impl Browser {
                 let mut c = child.borrow_mut();
                 c.dir = item.dir;
                 c.link = item.link;
+                c.links = item.links;
                 c.parent = Rc::downgrade(node);
                 if !c.dir || c.link {
                     c.children.clear();
@@ -263,15 +299,39 @@ impl Browser {
             .unwrap_or_else(|| self.root.clone());
     }
     pub fn step(&mut self, direction: isize) {
-        let Some(parent) = self.selected.borrow().parent.upgrade() else {
+        let mut depth = 0;
+        let mut ancestor = self.selected.clone();
+        loop {
+            let parent = ancestor.borrow().parent.upgrade();
+            let Some(parent) = parent else {
+                break;
+            };
+            depth += 1;
+            ancestor = parent;
+        }
+        let mut nodes = Vec::new();
+        let mut stack = vec![(self.root.clone(), 0)];
+        while let Some((node, level)) = stack.pop() {
+            if level == depth {
+                nodes.push(node);
+            } else if level < depth && node.borrow().expanded {
+                stack.extend(
+                    node.borrow()
+                        .children
+                        .iter()
+                        .rev()
+                        .map(|child| (child.clone(), level + 1)),
+                );
+            }
+        }
+        if nodes.is_empty() {
             return;
-        };
-        let nodes = &parent.borrow().children;
+        }
         let index = nodes
             .iter()
             .position(|n| Rc::ptr_eq(n, &self.selected))
             .unwrap_or(0);
-        let next = (index as isize + direction).clamp(0, nodes.len().saturating_sub(1) as isize);
+        let next = (index as isize + direction).rem_euclid(nodes.len() as isize);
         self.selected = nodes[next as usize].clone();
     }
     pub fn right(&mut self) {
@@ -535,6 +595,7 @@ pub struct Placement {
     pub x: usize,
     pub y: usize,
     pub label: String,
+    pub link_start: Option<usize>,
 }
 pub struct Layout {
     pub items: Vec<Placement>,
@@ -543,6 +604,58 @@ pub struct Layout {
     pub height: usize,
 }
 impl Layout {
+    /// Ancestor edges only, with junction shapes retained by the normal canvas.
+    #[allow(clippy::too_many_arguments)]
+    pub fn path_cells(
+        &self,
+        selected: &NodeRef,
+        gap: usize,
+        left: usize,
+        top: usize,
+        width: usize,
+        height: usize,
+    ) -> HashSet<(usize, usize)> {
+        let mut segments = Vec::new();
+        let mut node = selected.clone();
+        loop {
+            let parent = node.borrow().parent.upgrade();
+            let Some(parent) = parent else {
+                break;
+            };
+            let Some(child) = self.items.iter().find(|item| Rc::ptr_eq(&item.node, &node)) else {
+                break;
+            };
+            let Some(p) = self
+                .items
+                .iter()
+                .find(|item| Rc::ptr_eq(&item.node, &parent))
+            else {
+                break;
+            };
+            let first = parent.borrow().children.first().cloned();
+            let Some(first) = first.and_then(|first| {
+                self.items
+                    .iter()
+                    .find(|item| Rc::ptr_eq(&item.node, &first))
+            }) else {
+                break;
+            };
+            let branch = first.x - gap + 2;
+            segments.extend([
+                (p.x + p.label.width(), p.y, branch, p.y),
+                (branch, p.y, branch, child.y),
+                (branch, child.y, child.x - 1, child.y),
+            ]);
+            node = parent;
+        }
+        let route = Layout {
+            items: vec![],
+            lines: segments,
+            width: self.width,
+            height: self.height,
+        };
+        route.cells(left, top, width, height).into_keys().collect()
+    }
     pub fn new(browser: &Browser) -> Self {
         let nodes = browser.visible();
         let mut depths = HashMap::new();
@@ -557,12 +670,12 @@ impl Layout {
                 .and_then(|p| depths.get(&(Rc::as_ptr(&p) as usize)).copied())
                 .map_or(0, |v: usize| v + 1);
             depths.insert(id, depth);
-            let label = clip(&n.label(), browser.conf.label_width);
+            let (label, link_start) = n.label(browser.conf.label_width);
             if widths.len() <= depth {
                 widths.resize(depth + 1, 0)
             }
             widths[depth] = widths[depth].max(label.width());
-            labels.insert(id, label);
+            labels.insert(id, (label, link_start));
         }
         let mut columns = vec![0; widths.len()];
         for d in 1..columns.len() {
@@ -591,7 +704,7 @@ impl Layout {
             let id = Rc::as_ptr(&node) as usize;
             let x = columns[depths[&id]];
             let y = rows[&id];
-            let label = labels.remove(&id).unwrap();
+            let (label, link_start) = labels.remove(&id).unwrap();
             width = width.max(x + label.width());
             height = height.max(y + 1);
             locations.insert(id, (x, y, label.width()));
@@ -606,7 +719,13 @@ impl Layout {
                     }
                 }
             }
-            items.push(Placement { node, x, y, label });
+            items.push(Placement {
+                node,
+                x,
+                y,
+                label,
+                link_start,
+            });
         }
         let mut lines = vec![];
         for item in &items {

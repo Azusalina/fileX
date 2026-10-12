@@ -4,6 +4,9 @@ import { parseArgs } from 'node:util';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+// The TUI closes startup pipes once it has the URL.
+for (const stream of [process.stdout, process.stderr]) stream.on('error', error => { if (error.code !== 'EPIPE') process.exitCode = 1; });
 
 let app;
 let timer;
@@ -44,6 +47,9 @@ try {
   browser.unref();
   browser.on('error', error => { console.error(error.message); process.exitCode = 1; close().catch(console.error); });
   browser.on('exit', code => { if (code) { console.error(`浏览器退出码 ${code}`); process.exitCode = 1; close().catch(console.error); } });
+  await once(browser, 'spawn');
+  await new Promise(resolve => setTimeout(resolve, 150));
+  if (browser.exitCode && browser.exitCode !== 0) throw new Error(`浏览器退出码 ${browser.exitCode}`);
   console.log(app.url);
   schedule();
 } catch (error) {

@@ -26,10 +26,12 @@ class TerminalTests(unittest.TestCase):
             (root / "nested" / "sample.txt").write_text("sample")
             runner = root / "nested/script 空格.py"
             runner.write_text("from pathlib import Path\nPath('runner-created.txt').write_text('PYTHON-RAN')\nprint('PYTHON-RUNNER-RETURNED')\n")
+            (root / "nested/runner.r").write_text('writeLines("RSCRIPT-RAN", "r-result.txt")\ncat("RSCRIPT-RETURNED\\n")\n')
+            (root / "nested/runner.sh").write_text("printf '%s' BASH-RAN > shell-result.txt\nprintf '%s\\n' BASH-RETURNED\n")
             import json
             config = root / ".settings.conf"
             editor_code = 'import pathlib,sys; pathlib.Path(sys.argv[1]).write_text("edited"); print("EDITOR-RETURNED")'
-            config.write_text('[openers.fixture]\nlabel="Fixture editor"\nterminal=true\ncommand=' + json.dumps([sys.executable, "-c", editor_code, "{path}"]) + '\n[open_defaults]\n".txt"="fixture"\n".py"="python"\n')
+            config.write_text('[openers.fixture]\nlabel="Fixture editor"\nterminal=true\ncommand=' + json.dumps([sys.executable, "-c", editor_code, "{path}"]) + '\n[open_defaults]\n".txt"="fixture"\n".py"="python"\n".r"="rscript"\n".sh"="bash"\n')
             helpers = root / ".bin"
             helpers.mkdir()
             clipboard = root / ".clipboard"
@@ -47,7 +49,7 @@ class TerminalTests(unittest.TestCase):
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 26, 110, 0, 0))
             process = subprocess.Popen([str(Path(__file__).resolve().parents[1] / "filex.sh"), str(root), "--config", str(config)],
                                        stdin=slave, stdout=slave, stderr=slave,
-                                       cwd=Path(__file__).resolve().parents[1], env={**{k: v for k, v in os.environ.items() if k not in {"TMUX", "TMUX_PANE"}}, "TERM": "xterm-256color", "XDG_DATA_HOME": str(data), "PATH": str(helpers) + os.pathsep + os.environ["PATH"]})
+                                       cwd=Path(__file__).resolve().parents[1], env={**{k: v for k, v in os.environ.items() if k not in {"TMUX", "TMUX_PANE"} and not k.startswith("KONSOLE_DBUS_")}, "TERM": "xterm-256color", "XDG_DATA_HOME": str(data), "PATH": str(helpers) + os.pathsep + os.environ["PATH"]})
             os.close(slave)
             output = bytearray()
             def drain(timeout=.1):
@@ -70,9 +72,26 @@ class TerminalTests(unittest.TestCase):
                 while not (root / name).exists() and time.monotonic() < deadline:
                     drain(.05)
                 self.assertTrue((root / name).exists(), output.decode(errors="replace")[-2000:])
+            def copied_path(expected):
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    if clipboard.exists() and clipboard.read_text() == str(expected):
+                        return
+                    drain(.05)
+                self.fail("Clipboard did not contain expected path: " + output.decode(errors="replace")[-2000:])
             try:
-                drain(.3)
-                send("a中文.txt\r")
+                ready = time.monotonic() + 5
+                while "↑↓".encode() not in output and time.monotonic() < ready:
+                    drain(.05)
+                self.assertIn("↑↓".encode(), output)
+                (root / "ctrl-f5-probe.txt").write_text("externally created")
+                self.assertNotIn(b"ctrl-f5-probe.txt", output)
+                send("\x1b[15;5~")
+                refreshed = time.monotonic() + 3
+                while b"ctrl-f5-probe.txt" not in output and time.monotonic() < refreshed:
+                    drain(.05)
+                self.assertIn(b"ctrl-f5-probe.txt", output)
+                send("\x0e中文.txt\r")
                 exists("中文.txt")
                 self.assertEqual(im_state.read_text(), "keyboard-us")
                 send("r\x15first-name.txt\r")
@@ -85,13 +104,21 @@ class TerminalTests(unittest.TestCase):
                 send("mmoved.txt\r")
                 exists("moved.txt")
                 self.assertFalse((root / "copied.txt").exists())
-                send("Anew-folder\r")
+                send("\x1b[110;6unew-folder\r")
+                exists("new-folder")
+                send("\x1b[D")
+                send("\x1b[78;6uanother-folder\r")
+                exists("another-folder")
                 exists("new-folder")
                 send("?q")
                 send("p\x1b")
                 send("q")
                 self.assertIn(b"Created", output)
                 self.assertIn(b"Modified", output)
+                send("]")
+                self.assertIn("信息面板宽度: 40 列".encode(), output)
+                send("[")
+                self.assertIn("信息面板宽度: 36 列".encode(), output)
                 self.assertIsNone(process.poll())
                 send("q")
                 send("\x06sample\r")
@@ -100,13 +127,17 @@ class TerminalTests(unittest.TestCase):
                 self.assertEqual((root / "nested/sample.txt").read_text(), "edited")
                 self.assertIn(b"EDITOR-RETURNED", output)
                 self.assertIsNone(process.poll())
+                deadline = time.monotonic() + 3
+                while "↑↓".encode() not in output[output.rfind(b"EDITOR-RETURNED"):] and time.monotonic() < deadline:
+                    drain(.05)
+                self.assertIn("↑↓".encode(), output[output.rfind(b"EDITOR-RETURNED"):])
                 send("\x1b\x03")
                 self.assertIsNone(process.poll())
-                self.assertEqual(clipboard.read_text(), str(root / "nested/sample.txt"))
+                copied_path(root / "nested/sample.txt")
                 self.assertIn("已复制绝对路径".encode(), output)
                 send("\x1b[D")
                 send("\x1b[99;7u")  # enhanced Ctrl+Alt+C (CSI-u)
-                self.assertEqual(clipboard.read_text(), str(root / "nested"))
+                copied_path(root / "nested")
                 send("v")
                 self.assertNotIn("纵向树".encode(), output)
                 send("\x06\x15script 空格\r")
@@ -116,16 +147,29 @@ class TerminalTests(unittest.TestCase):
                 self.assertIn("按 Enter 返回 filex".encode(), output)
                 send("\r")
                 self.assertIsNone(process.poll())
+                for query, result_name, content, marker in [("runner.r", "r-result.txt", "RSCRIPT-RAN\n", b"RSCRIPT-RETURNED"),
+                                                            ("runner.sh", "shell-result.txt", "BASH-RAN", b"BASH-RETURNED")]:
+                    send("\x06\x15" + query + "\r")
+                    send("o")
+                    end = time.monotonic() + 5
+                    result = root / "nested" / result_name
+                    while not result.exists() and time.monotonic() < end:
+                        drain(.05)
+                    self.assertEqual(result.read_text(), content)
+                    drain(.2)
+                    self.assertIn(marker, output)
+                    send("\r")
                 send("\r\x1b")
                 self.assertIn("打开方式".encode(), output)
                 send("\x06\x15delete-me\r")
                 send("\x1b[3~")
-                self.assertIn("输入 YES".encode(), output)
+                self.assertIn("再次按 Enter 确认".encode(), output)
                 send("\x1b")
                 self.assertTrue(victim.exists())
-                send("\x1b[3~NO\r")
+                send("\x1b[3~NO")
                 self.assertTrue(victim.exists())
-                send("\x1b[3~YES\r")
+                send("\x1b")
+                send("\x1b[3~\r")
                 deadline = time.monotonic() + 3
                 while victim.exists() and time.monotonic() < deadline:
                     drain(.05)

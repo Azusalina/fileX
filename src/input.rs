@@ -44,3 +44,31 @@ impl Drop for EnglishGuard {
         }
     }
 }
+
+/// Reassert English when the terminal/pane regains focus, keeping the original
+/// method in EnglishGuard for final restoration.
+pub fn ensure_english(enabled: bool) {
+    if !enabled {
+        return;
+    }
+    let Ok(mut child) = Command::new("fcitx5-remote")
+        .args(["--check", "-s", "keyboard-us"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        if child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}

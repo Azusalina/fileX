@@ -113,11 +113,12 @@ class ExplorerTests(unittest.TestCase):
         config = load_config(path)
         self.assertTrue(config.show_hidden)
         self.assertEqual(config.keys["quit"], "x")
+        self.assertNotEqual(config.keys["exit_here"], "x")
         for content in ('[layout]\ncolumn_gap = true', '[keys]\nquit = "j"', '[layout]\ncolumn_gap = 0', '[browser]\nsort = "bad"', '[what]\nx=1', '[colors]\nbackground="red"', '[keys]\nquit="H"', 'invalid'):
             path.write_text(content)
             with self.assertRaises(ValueError, msg=content):
                 load_config(path)
-        load_config(Path(__file__).resolve().parents[1] / "fileX.conf")
+        load_config(Path(__file__).resolve().parents[1] / "fileX.example.conf")
 
     def test_preview_bounded_binary_and_fifo(self):
         path = self.root / "text"

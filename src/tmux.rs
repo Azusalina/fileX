@@ -146,8 +146,8 @@ pub fn open_in_right_pane(command: &Command) -> Option<String> {
         return None;
     }
     let prefix = cwd
-        .map(|dir| format!("env -C {} --", shell_quote(dir)))
-        .unwrap_or_else(|| "env --".into());
+        .map(|dir| format!("env -u FILEX_CWD_FILE -C {} --", shell_quote(dir)))
+        .unwrap_or_else(|| "env -u FILEX_CWD_FILE --".into());
     let line = format!(
         "{prefix} {}",
         args.iter()

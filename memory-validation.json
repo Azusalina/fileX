@@ -1,6 +1,6 @@
 {
-  "version": "1.4.0",
-  "binary_sha256": "fc9aba6b3094ef2674421434b44c8464cb7bfaf52f5405e32f12623e5abbd5bb",
+  "version": "1.5.0",
+  "binary_sha256": "ab3cc6e03f66efd22b3e2d9564b8a87dcf79d8e5b1b53ab14aa8be2e8e01716f",
   "date": "2026-10-12",
   "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications",
   "settings": {
@@ -9,24 +9,58 @@
     "max_expand_nodes": 5000
   },
   "scenarios": {
+    "symlinks_7200": {
+      "max_observed_rss_kib": 6904,
+      "peak_rss_kib": 6904,
+      "peak_rss_mb": 7.07,
+      "peak_rss_mib": 6.742,
+      "under_15_mb": true,
+      "actions": [
+        "E",
+        "q",
+        "\u0006soft_B059_I119\r",
+        "k",
+        "j",
+        "I",
+        "\u001b",
+        "\u0012"
+      ]
+    },
+    "hard_links_2400": {
+      "max_observed_rss_kib": 3856,
+      "peak_rss_kib": 3856,
+      "peak_rss_mb": 3.949,
+      "peak_rss_mib": 3.766,
+      "under_15_mb": true,
+      "actions": [
+        "\u001b[C",
+        "q",
+        "I",
+        "\u001b",
+        "\u0006hard2399\r",
+        "\u0012"
+      ]
+    },
     "project_root": {
-      "max_observed_rss_kib": 3692,
-      "peak_rss_kib": 3692,
-      "peak_rss_mb": 3.781,
-      "peak_rss_mib": 3.605,
+      "max_observed_rss_kib": 4588,
+      "peak_rss_kib": 4632,
+      "peak_rss_mb": 4.743,
+      "peak_rss_mib": 4.523,
       "under_15_mb": true,
       "actions": [
         "q",
+        "]]]]]]]]]]]]",
+        "[[[[[[[[[[[[",
         "E",
         "C",
         "\u0012"
       ]
     },
     "flat_20000_files": {
-      "max_observed_rss_kib": 3732,
-      "peak_rss_kib": 3732,
-      "peak_rss_mb": 3.822,
-      "peak_rss_mib": 3.645,
+      "max_observed_rss_kib": 4024,
+      "peak_rss_kib": 4024,
+      "peak_rss_mb": 4.121,
+      "peak_rss_mib": 3.93,
       "under_15_mb": true,
       "actions": [
         "q",
@@ -40,15 +74,17 @@
       ]
     },
     "branches_7200_files": {
-      "max_observed_rss_kib": 6176,
-      "peak_rss_kib": 6176,
-      "peak_rss_mb": 6.324,
-      "peak_rss_mib": 6.031,
+      "max_observed_rss_kib": 6784,
+      "peak_rss_kib": 6784,
+      "peak_rss_mb": 6.947,
+      "peak_rss_mib": 6.625,
       "under_15_mb": true,
       "actions": [
         "E",
         "q",
         "\u0006needle_B059_I119\r",
+        "k",
+        "j",
         "\u001b[D",
         "\u001b[D",
         "\u001b[D",

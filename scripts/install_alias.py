@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install a scoped Bash alias without changing the caller's working directory."""
+"""Install the filex Bash function; cd only after an explicit exit-here action."""
 import argparse
 import os
 from pathlib import Path
@@ -20,8 +20,24 @@ base = pattern.sub("", original)
 if not args.remove:
     if re.search(r"^\s*(?:alias\s+filex=|(?:function\s+)?filex\s*\(\))", base, re.M):
         raise SystemExit("发现既有 filex alias / function，拒绝覆盖")
-    alias = shlex.quote(shlex.quote(str(root / "filex.sh")))
-    block = f"{start}\nalias filex={alias}\n{end}\n"
+    launcher = shlex.quote(str(root / "filex.sh"))
+    function = r'''unalias filex 2>/dev/null || true
+filex() {
+    local filex_cwd_file filex_destination filex_exit_status
+    filex_cwd_file="$(command mktemp "${TMPDIR:-/tmp}/filex-cwd.XXXXXX")" || return
+    if FILEX_CWD_FILE="$filex_cwd_file" @FILEX_LAUNCHER@ "$@"; then
+        filex_exit_status=0
+    else
+        filex_exit_status=$?
+    fi
+    if [[ -s "$filex_cwd_file" ]] && IFS= read -r -d '' filex_destination < "$filex_cwd_file"; then
+        builtin cd -- "$filex_destination" || filex_exit_status=$?
+    fi
+    command rm -f -- "$filex_cwd_file"
+    return "$filex_exit_status"
+}
+'''.replace("@FILEX_LAUNCHER@", launcher)
+    block = start + "\n" + function + end + "\n"
     changed = base.rstrip("\n") + "\n\n" + block
 else:
     changed = base
@@ -37,4 +53,4 @@ if changed != original:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
-print(f"{'移除' if args.remove else '安装'} filex alias: {path}")
+print(f"{'移除' if args.remove else '安装'} filex shell function: {path}")

@@ -5,6 +5,7 @@ import shutil
 import stat
 import subprocess
 from .core import safe_text
+from .links import details, details_text
 
 
 def human_size(size):
@@ -30,14 +31,15 @@ def birth_time(path, info):
         return None
 
 
-def metadata(path):
-    path = Path(path)
+def metadata(path, root=None, config=None):
+    path = Path(path).absolute()
     try:
         info = path.lstat()
         created = birth_time(path, info)
         directory = stat.S_ISDIR(info.st_mode)
         kind = "目录" if directory else "符号链接" if stat.S_ISLNK(info.st_mode) else "普通文件" if stat.S_ISREG(info.st_mode) else "特殊文件"
         return {
+            **details(path, root if root is not None else path.absolute().parent, info, config),
             "name": safe_text(path.name or str(path)), "path": safe_text(path), "kind": kind,
             "created": datetime.fromtimestamp(created).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z") if created is not None else "不可用（文件系统未提供）",
             "modified": datetime.fromtimestamp(info.st_mtime).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
@@ -52,4 +54,22 @@ def metadata_text(data):
     if "error" in data:
         return f"无法读取信息: {data['error']}"
     return (f"{data['name']}\n{data['kind']}\n\nCreated / 创建时间\n{data['created']}\n\n"
-            f"Modified / 修改时间\n{data['modified']}\n\nSize / 大小\n{data['size']}\n{data['size_note']}\n\nPath / 路径\n{data['path']}")
+            f"Modified / 修改时间\n{data['modified']}\n\nSize / 大小\n{data['size']}\n{data['size_note']}\n\n{details_text(data)}\nPath / 路径\n{data['path']}")
+
+
+def dashboard_text(path, root, config):
+    from .core import preview
+    path = Path(path)
+    text = metadata_text(metadata(path, root, config))
+    if config.preview_lines == 0:
+        return text
+    try:
+        regular = stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return text
+    if regular:
+        rendered = preview(path, config.preview_bytes)
+        body = rendered.partition("\n\n")[2] if "\n\n" in rendered else rendered
+        head = "\n".join(body.splitlines()[:config.preview_lines]) or "（空文件）"
+        return f"Preview / 前 {config.preview_lines} 行\n{head}\n\n{text}"
+    return text

@@ -99,8 +99,8 @@ class NavigationFeatures(unittest.TestCase):
             self.assertEqual(command, ["test-editor", "--file=" + str(path)])
             self.assertTrue(terminal)
             with patch("filex.opening.subprocess.Popen") as process:
-                launch_open(path, conf, "test", gui=True)
-                self.assertEqual(process.call_args.args[0], ["/bin/true", "-e", *command])
+                launch_open(path, conf, "test")
+                self.assertEqual(process.call_args.args[0], command)
                 self.assertNotIn("shell", process.call_args.kwargs)
         self.assertEqual(opener_choices(node, conf)[0][0], "vscodium")
 
@@ -140,6 +140,8 @@ terminal = false
         self.browser.right()
         deep = self.browser.selected
         self.browser.step(1)
+        self.assertEqual(self.browser.selected.path, self.root / "right/deep")
+        self.browser.step(-1)
         self.assertIs(self.browser.selected, deep)
         self.browser.back()
         self.assertIs(self.browser.selected, left)
@@ -164,6 +166,55 @@ terminal = false
         self.assertEqual(key_map(conf)["\x12"], "refresh")
         self.assertEqual(key_map(conf)["ctrl+alt+c"], "copy_path")
 
+
+
+
+    def test_cross_parent_level_selection_wraps_and_skips_hidden_descendants(self):
+        (self.root / "left/local.txt").touch()
+        self.browser.refresh()
+        self.browser.expand_all()
+        nodes = {n.path: n for n in self.browser.visible()}
+        first, last = nodes[self.root / "left/deep"], nodes[self.root / "right/deep"]
+        self.browser.selected = first
+        self.browser.step(-1)
+        self.assertIs(self.browser.selected, last)
+        self.browser.step(1)
+        self.assertIs(self.browser.selected, first)
+        self.browser.step(1)
+        self.assertEqual(self.browser.selected.path, self.root / "left/local.txt")
+        self.browser.step(1)
+        self.assertIs(self.browser.selected, last)
+        self.browser.back()
+        self.assertEqual(self.browser.selected.path, self.root / "right")
+        self.assertTrue(first.expanded)
+        nodes[self.root / "right"].expanded = False
+        self.browser.selected = first
+        self.browser.step(-1)
+        self.assertEqual(self.browser.selected.path, self.root / "left/local.txt")
+
+    def test_dashboard_width_and_named_folder_colors(self):
+        from filex.config import dashboard_columns
+        settings = self.root / "settings.conf"
+        settings.write_text('[dashboard]\ndashboard_width=100\n[colors]\npath_color=" #9cc5d1 "\n[extension_colors]\n".js"=" #FFD700 "\n[folder_colors]\nnode_modules="#123456"\nCustom="#FFD700"\n".git"=" #FFFEF7 "\n__pycache__=" #ADD8E6"\n')
+        config = load_config(settings)
+        self.assertEqual(dashboard_columns(config, 140), 100)
+        self.assertEqual(dashboard_columns(config, 100), 62)
+        self.assertEqual(dashboard_columns(config, 69), 0)
+        self.assertEqual(config.folder_colors[".git"], "#FFFEF7")
+        self.assertEqual(config.folder_colors["__pycache__"], "#ADD8E6")
+        self.assertEqual(config.path_color, "#9cc5d1")
+        self.assertEqual(config.extension_colors[".js"], "#FFD700")
+        for name in ("node_modules", "Custom", "custom"):
+            (self.root / name).mkdir()
+        self.browser.config = config
+        self.browser.refresh()
+        nodes = {n.path.name: n for n in self.browser.root.children}
+        self.assertEqual(display_color(nodes["node_modules"], config), "#123456")
+        self.assertEqual(display_color(nodes["Custom"], config), "#FFD700")
+        self.assertEqual(display_color(nodes["custom"], config), config.folder_color)
+        for invalid in ['[dashboard]\ndashboard_width=19', '[dashboard]\ndashboard_width=241', '[folder_colors]\nnode_modules="red"', '[folder_colors]\n"a/b"="#123456"']:
+            settings.write_text(invalid)
+            with self.assertRaises(ValueError): load_config(settings)
 
 
 if __name__ == "__main__":
