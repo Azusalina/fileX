@@ -168,7 +168,7 @@ impl Browser {
         }
         result
     }
-    fn loaded(&self) -> usize {
+    pub fn loaded(&self) -> usize {
         let mut count = 0;
         let mut stack = vec![self.root.clone()];
         while let Some(node) = stack.pop() {

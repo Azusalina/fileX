@@ -6,7 +6,7 @@
 
 ## 导航与 tmux
 
-↑/↓ 与 j/k 在当前树的所有可见分支中选择相同深度的节点，可跨父目录；→ / l 展开 / 进入子级，← 返回所选节点的实际父目录。最上方 ↑ 跳到同层最下方，最下方 ↓ 回到同层最上方；PgUp/PgDn 也按该顺序循环。已展开目录的更深层后代不会被同层移动选中，未展开分支中的隐藏后代不会被自动打开；根节点所在层只有它自己时保持不动。同层扫描只遍历已有可见树，不读取新的目录、不收起分支。返回父级键直接选择父节点，不收起任何分支；在根节点使用它时，将原根节点挂到新父节点下并选中新根，旧分支的节点身份与展开状态保留。h 仅收起选中的目录。f / keys.focus_root 将选中目录（文件时为其父目录）设为根，并重新读取目录；保留该子树展开状态、清空搜索、重置视口。Rust 会释放当前根以外的缓存，之后可用返回父级键重新引入上级目录。旧 parent=u 配置自动迁移为 Left。
+单栏与双栏左侧：↑/↓ 与 j/k 在当前树的所有可见分支中选择相同深度的节点，可跨父目录；→ / l 展开 / 进入子级，← 返回所选节点的实际父目录。最上方 ↑ 跳到同层最下方，最下方 ↓ 回到同层最上方；PgUp/PgDn 也按该顺序循环。已展开目录的更深层后代不会被同层移动选中，未展开分支中的隐藏后代不会被自动打开；根节点所在层只有它自己时保持不动。同层扫描只遍历已有可见树，不读取新的目录、不收起分支。返回父级键直接选择父节点，不收起任何分支；在根节点使用它时，将原根节点挂到新父节点下并选中新根，旧分支的节点身份与展开状态保留。h 仅收起选中的目录。f / keys.focus_root 将选中目录（文件时为其父目录）设为根，并重新读取目录；保留该子树展开状态、清空搜索、重置视口。Rust 会释放当前根以外的缓存，之后可用返回父级键重新引入上级目录。旧 parent=u 配置自动迁移为 Left。
 
 TUI 只保留横向树，标题为 filex。r 和 Shift+R 重命名，Ctrl+R / F5 / Ctrl+F5 刷新；旧配置 refresh=r / rename=R 自动迁移为新默认键。Ctrl+Alt+C 复制当前 file/folder 的绝对路径，不解析选中符号链接的目标、不添加换行。Rust / 旧 Python TUI 通过 wl-copy 标准输入复制到 Wayland 剪贴板；不经过 shell。传统终端的 Esc + Ctrl+C 和增强 CSI-u 编码、隔离 tmux 的组合键均有集成验证。单独 Ctrl+C 仍退出 TUI。旧 layout.orientation / keys.toggle_tree 配置仅被忽略，运行时没有对应状态或动作。
 
@@ -80,7 +80,7 @@ TUI 的 Delete 键与 D 均调用 gio trash，再次按 Enter 才移到回收站
 | 区段 | 可自定义内容 |
 |---|---|
 | browser | show_hidden, directories_first, sort, max_entries, max_expand_nodes, max_loaded_nodes（Rust TUI） |
-| layout | column_gap, max_label_width, row_spacing, highlight_path |
+| layout | column_gap, max_label_width, row_spacing, highlight_path, dual_pane（默认启动模式） |
 | tmux | open_in_right_pane（Rust TUI） |
 | input_method | auto_english（Fcitx5 TUI） |
 | dashboard | dashboard_width：20..240 列；[ / ] 运行时调整 |
@@ -91,7 +91,7 @@ TUI 的 Delete 键与 D 均调用 gio trash，再次按 Enter 才移到回收站
 | folder_colors | 目录名 → #RRGGBB；精确、区分大小写 |
 | openers | 程序名称 → label / command / terminal / copy_path / pause_on_exit |
 | open_defaults | 扩展名 → 已定义的程序名称 |
-| keys | 单字符 / Ctrl+字母 / Ctrl+Shift+字母 / Ctrl+Alt+字母快捷键，parent 支持 Left |
+| keys | 单字符 / Ctrl+字母 / Ctrl+Shift+字母 / Ctrl+Alt+字母快捷键，parent 支持 Left；switch_pane 支持 Tab |
 | links | scan_limit, max_results |
 | terminal | konsole_shortcuts, tmux_extended_keys（Rust TUI） |
 
@@ -128,11 +128,11 @@ python scripts/measure_memory.py
 
 ## 验证
 
-2026-10-12：Rust 23 项单元检查、Python 40 项核心 / CLI / 真实 PTY / tmux 集成检查（合计 63 项）全部通过；Clippy 无 warning，release 已构建。验证新增跨父目录同深度导航、首尾循环、q 面板 [ / ] 实际调整宽度、目录名颜色 RGB 输出和合法 / 非法配置；覆盖 Ctrl+N / Ctrl+Shift+N、真实 tmux CSI-u 与退出目录、链接标记与有界扫描、q / I 文件开头配置、Python / Rscript / Bash 真实执行、默认颜色与非法配置处理、GUI 入口拒绝和旧菜单安装清理。真实 PTY 另外验证软链接连接线和目标输出 RGB(75,0,130) 加粗，选中链接时保持该样式；.js / .MJS 输出 RGB(255,215,0)，逗号重载改变 RGB，非法值保留先前颜色。测试就绪条件由固定延时改为等待 TUI 页脚，避免启动期间输入被终端提前转换。
+2026-10-12：Rust 25 项单元检查、Python 44 项核心 / CLI / 真实 PTY / tmux 集成检查（合计 69 项）全部通过；Clippy 无 warning，release 已构建。验证新增跨父目录同深度导航、首尾循环、q 面板 [ / ] 实际调整宽度、目录名颜色 RGB 输出和合法 / 非法配置；覆盖 Ctrl+N / Ctrl+Shift+N、真实 tmux CSI-u 与退出目录、链接标记与有界扫描、q / I 文件开头配置、Python / Rscript / Bash 真实执行、默认颜色与非法配置处理、GUI 入口拒绝和旧菜单安装清理。真实 PTY 另外验证软链接连接线和目标输出 RGB(75,0,130) 加粗，选中链接时保持该样式；.js / .MJS 输出 RGB(255,215,0)，逗号重载改变 RGB，非法值保留先前颜色。测试就绪条件由固定延时改为等待 TUI 页脚，避免启动期间输入被终端提前转换。
 
 Konsole 当前窗口 new-window 动作停用已在本机独立终端实测；最后一个实例退出恢复原启用 / 禁用状态由隔离 DBus CLI 加两个真实 TUI 实例验证。本机 Konsole 禁用 sendText 敏感 DBus API，因此未用该接口验证真实窗口中的 Q 退出；没有更改这项设置。tmux 恢复原 extended-keys / format 已在隔离真实 server 完成验证。
 
-内存验证记录中测量的 release 的项目目录 / 20000 文件 / 7200 多分支文件 / 2400 硬链接 / 7200 软链接场景峰值分别为 4.530 / 3.994 / 6.898 / 3.936 / 7.021 MB，均低于 15 MB；测试启用 RGB，外部解释器与浏览器不计入应用进程。详情和二进制 SHA256 见 [memory-validation.json](memory-validation.json)。源配置与本机个人配置都通过 Rust / Python 解析验证；filex Bash 函数及命令链接已安装。GUI 已移除，不再设置 GUI 内存目标。
+内存验证记录中测量的 release 的项目目录 / 20000 文件 / 7200 多分支文件 / 2400 硬链接 / 7200 软链接场景峰值分别为 4.841 / 4.035 / 6.943 / 3.813 / 7.025 MB，双栏两侧展开 7200 文件目录的场景峰值为 8.184 MB；六个场景均低于 15 MB。测试启用 RGB，外部解释器与浏览器不计入应用进程。详情和二进制 SHA256 见 [memory-validation.json](memory-validation.json)。源配置与本机个人配置都通过 Rust / Python 解析验证；filex Bash 函数及命令链接已安装。GUI 已移除，不再设置 GUI 内存目标。
 
 ## 2026-10-12 运行修复与祖先路径高亮
 
@@ -147,6 +147,20 @@ TUI 请求焦点事件；tmux focus-events 通过单独的 flock / PID 租约临
 原行为记录：此前 README 要求已有终端 source ~/.bashrc，并且独立入口 x 提示不能改变父 shell、保持 TUI；Delete 要求输入 YES。以上行为已由本节和当前 README 替代。个人配置自定义的 .git / .github 颜色继续使用；本次发现 pycache 颜色的开头空格后统一容忍颜色首尾空格，不改写个人颜色。
 
 2026-10-12：增加软链接右侧目标的独立选择。Rust 检查相对 / 绝对 / 连续 / 目录 / 断开 / 循环解析；真实 PTY 检查目标名称反色、x 的 NUL 路径回传、← 返回源链接及同层移动清除目标选择，目标位于原根目录外且包含中文和引号。
+
+## 中轴镜像双目录树与跨栏文件操作
+
+v / keys.toggle_dual 开关同一界面双栏，Tab / Shift+Tab / keys.switch_pane 切换操作侧；不是新 tmux pane。左树正常向右展开，右树沿树区域中轴镜像向左展开，文字不反转，连接角及分支字形镜像，折叠目录图标指向左。两侧分别维护 Browser、根目录、光标、展开分支、搜索与滚动位置、链接目标选择；活动侧用 ● 标识，只有活动侧显示反色光标。新开的另一侧以当前选中目录或文件父目录为根；关闭双栏释放非活动侧，当前侧恢复单栏正常方向。
+
+右侧物理 ← 映射为展开 / 进入，→ 映射为实际父级；左右的同级 ↑↓ 循环规则相同。右侧软链接在 ← 时进入行内目标、→ 返回源链接，x 仍进入目标文件父目录（目录进入自身）；h 收起、l 逻辑展开仍维持原绑定，H/L 横移方向在右侧反转。f / g / 搜索 / 新建等只操作活动侧；q / I / 预览 / 打开程序也读取活动侧。双栏最少 75×8，缩窄时仍能用双栏开关键恢复单栏或退出。q 双栏最少 110 列并给两树各保留至少 36 列，剩余树区域保持镜像中轴；[ / ] 宽度上限随可用空间收紧。
+
+双栏 c/m 预填另一侧所选目录加源文件名；另一侧选中文件时取父目录，行内链接目标选择使用解析后的目标路径。完整目标路径可编辑，Enter 执行、Esc 取消。继续调用已有 files.transfer，不经过 shell、不覆盖同名项、拒绝目录复制到自身内部；目录递归复制，符号链接复制链接本身，跨文件系统移动走已有复制后删除源流程。失败保留既有错误处理。成功刷新两侧，目标位于已展开目录时强制保留新条目显示，目的侧光标和其他展开状态保留。根目录移动限制保持，先返回其父级再选目录操作。
+
+配置 `layout.dual_pane=false` 是启动默认模式，逗号重载颜色 / 热键等不自动开关现有双栏；运行时开关由 v 控制。`keys.toggle_dual="v"`、`switch_pane="Tab"` 可改为其他允许绑定；Tab 仅用于切换栏，Shift+Tab 同样切换。已有配置把 v 分配给其他动作且未定义 toggle_dual 时，双栏默认键自动让位到 V / Ctrl+Alt+v。旧 toggle_tree / orientation 继续忽略，v 的新含义是双栏，不恢复垂直视图。Python 历史配置解析接受这些字段，双栏实现只在 Rust TUI。
+
+缓存方案：每侧沿用 browser.max_loaded_nodes（默认 6000），双栏总缓存节点至多约两倍单栏上限，两侧布局依次生成后释放。这样一侧的展开不会挤掉另一侧树或使其不能继续浏览；关闭双栏释放另一侧缓存。两个 Browser 在同一个 Rust 进程，终端 / runtime / 代码页共享；仍以该进程的 VmHWM 实测 <15 MB，不用节点数量推断 RSS。六个场景的当前数据、操作序列及二进制 SHA256 见 memory-validation.json；增大缓存、标签、搜索上限仍可能超过目标。
+
+验证覆盖普通 / 镜像文本及中文位置、连接字形翻转、视口边界裁切、独立光标和缓存上限；真实 PTY 覆盖文件 / 目录 / 软链接复制、移动后源消失、目标重名保护、取消、目的侧光标和展开状态、右侧父子导航、配置启动双栏、镜像链接目标 x、可自定义开关 / 切换键及小终端恢复。隔离真实 tmux 额外验证 v 开关及 Tab 往返；未操作用户活跃 tmux 会话。
 
 ## 参考
 

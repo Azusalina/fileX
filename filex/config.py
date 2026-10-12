@@ -12,6 +12,7 @@ DEFAULT_KEYS = {
     "next_match": "n", "previous_match": "N", "goto": "g", "parent": "Left", "focus_root": "f",
     "new_file": "a", "new_folder": "A", "rename": "r", "copy": "c", "copy_path": "Ctrl+Alt+c",
     "move": "m", "trash": "D", "help": "?", "config": ",",
+    "toggle_dual": "v", "switch_pane": "Tab",
 }
 DEFAULT_OPENERS = {
     "system": {"label": "系统默认", "command": ["xdg-open", "{path}"], "terminal": False},
@@ -29,6 +30,8 @@ DEFAULT_OPENERS = {
 
 def key_code(key):
     """Translate editable Ctrl+letter bindings to the character sent by terminals."""
+    if isinstance(key, str) and key.lower() == "tab":
+        return "\t"
     if isinstance(key, str) and re.fullmatch(r"(?i)ctrl\+[a-z]", key):
         return chr(ord(key[-1].lower()) - ord("a") + 1)
     if isinstance(key, str) and re.fullmatch(r"(?i)ctrl\+(alt\+|shift\+|alt\+shift\+)[a-z]", key):
@@ -69,6 +72,7 @@ class Config:
     max_loaded_nodes: int = 6000
     row_spacing: int = 1
     highlight_path: bool = True
+    dual_pane: bool = False
     open_in_right_pane: bool = True
     auto_english: bool = True
     konsole_shortcuts: bool = True
@@ -131,7 +135,7 @@ def load_config(path=None):
         raise ValueError(f"未知配置区段: {', '.join(sorted(unknown))}")
     sections = {
         "browser": {"show_hidden", "sort", "directories_first", "max_entries", "max_expand_nodes", "max_loaded_nodes"},
-        "layout": {"column_gap", "max_label_width", "row_spacing", "highlight_path"},
+        "layout": {"column_gap", "max_label_width", "row_spacing", "highlight_path", "dual_pane"},
         "tmux": {"open_in_right_pane"},
         "input_method": {"auto_english"},
         "links": {"scan_limit", "max_results"},
@@ -181,11 +185,11 @@ def load_config(path=None):
         keys["refresh"] = "Ctrl+r"
     if keys.get("rename") == "R":
         keys["rename"] = "r"
-    reserved = {"\n", "\r", "\t", " ", "\x1b", "\x03", "\x15", "\x13", "\x11", "\x1a", "H", "L", ":"}
+    reserved = {"\n", "\r", " ", "\x1b", "\x03", "\x15", "\x13", "\x11", "\x1a", "H", "L", ":"}
     for action, key in keys.items():
         code = key_code(key)
         ctrl = isinstance(key, str) and bool(re.fullmatch(r"(?i)ctrl\+(alt\+)?(shift\+)?[a-z]", key))
-        if not isinstance(key, str) or not (ctrl or len(key) == 1 and key.isprintable() or action == "parent" and code == "left" or action == "refresh" and code == "ctrl+f5") or code in reserved:
+        if not isinstance(key, str) or not (ctrl or len(key) == 1 and key.isprintable() or action == "parent" and code == "left" or action == "refresh" and code == "ctrl+f5" or action == "switch_pane" and code == "\t") or code in reserved or code == "\t" and action != "switch_pane":
             raise ValueError(f"keys.{action}: 应为一个非保留字符、Ctrl+字母或 parent=Left")
         if code in {"\x06", "/"} and action != "search":
             raise ValueError("Ctrl+F 和 / 保留给搜索")
@@ -196,7 +200,7 @@ def load_config(path=None):
         if code == "\x0e" and action != "new_file" or code == "ctrl+shift+n" and action != "new_folder":
             raise ValueError("Ctrl+N / Ctrl+Shift+N 保留给新建文件 / 目录")
         conf.keys[action] = key
-    for action, alternatives in [("exit_here", ["z", "b", "t", "s", "Ctrl+Alt+x"]), ("link_info", ["i", "B", "T", "Ctrl+Alt+i"]), ("dashboard_narrow", ["{", "-", "Ctrl+Alt+b"]), ("dashboard_widen", ["}", "+", "Ctrl+Alt+w"])]:
+    for action, alternatives in [("exit_here", ["z", "b", "t", "s", "Ctrl+Alt+x"]), ("link_info", ["i", "B", "T", "Ctrl+Alt+i"]), ("dashboard_narrow", ["{", "-", "Ctrl+Alt+b"]), ("dashboard_widen", ["}", "+", "Ctrl+Alt+w"]), ("toggle_dual", ["V", "Ctrl+Alt+v"])]:
         if action not in keys:
             occupied = {key_code(value) for name, value in conf.keys.items() if name != action}
             if key_code(conf.keys[action]) in occupied:

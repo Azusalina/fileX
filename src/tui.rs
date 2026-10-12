@@ -92,6 +92,7 @@ fn read_key(auto_english: bool) -> Result<String, String> {
                         }
                     }
                     KeyCode::Enter => "enter".into(),
+                    KeyCode::Tab | KeyCode::BackTab => "\t".into(),
                     KeyCode::Esc => "escape".into(),
                     KeyCode::Backspace => "backspace".into(),
                     KeyCode::Delete => "delete".into(),
@@ -178,181 +179,385 @@ fn put_styled(
     queue!(out, Print(value)).map_err(ioerr)?;
     Ok(())
 }
-struct Ui {
+#[derive(Clone, Copy)]
+struct TreeArea {
+    x: usize,
+    width: usize,
+    mirrored: bool,
+}
+impl TreeArea {
+    #[allow(clippy::too_many_arguments)]
+    fn paint(
+        &self,
+        out: &mut impl Write,
+        y: usize,
+        x: isize,
+        text: &str,
+        color: Option<&str>,
+        reverse: bool,
+        bold: bool,
+        dim: bool,
+    ) -> Result<(), String> {
+        let text = clean(text);
+        let text = if self.mirrored {
+            text.chars()
+                .map(|c| match c {
+                    '┌' => '┐',
+                    '┐' => '┌',
+                    '└' => '┘',
+                    '┘' => '└',
+                    '├' => '┤',
+                    '┤' => '├',
+                    '▸' => '◂',
+                    _ => c,
+                })
+                .collect::<String>()
+        } else {
+            text
+        };
+        let mut x = if self.mirrored {
+            self.width as isize - x - text.width() as isize
+        } else {
+            x
+        };
+        let mut text = text.as_str();
+        while x < 0 && !text.is_empty() {
+            let c = text.chars().next().unwrap();
+            text = &text[c.len_utf8()..];
+            x += c.width().unwrap_or(0) as isize;
+        }
+        if x < 0 || x >= self.width as isize {
+            return Ok(());
+        }
+        put_styled(
+            out,
+            y,
+            self.x as isize + x,
+            text,
+            self.x + self.width,
+            color,
+            reverse,
+            bold,
+            dim,
+        )
+    }
+}
+fn draw_tree(
+    out: &mut impl Write,
+    pane: &mut Pane,
+    area: TreeArea,
+    body: usize,
+    active: bool,
+) -> Result<(), String> {
+    let tree = area.width;
+    let layout = Layout::new(&pane.browser);
+    let selected = layout
+        .items
+        .iter()
+        .find(|p| Rc::ptr_eq(&p.node, &pane.browser.selected))
+        .ok_or("选中节点不在树中")?;
+    if pane.focus {
+        if selected.y < pane.top {
+            pane.top = selected.y
+        }
+        if selected.y >= pane.top + body {
+            pane.top = selected.y - body + 1
+        }
+        if selected.x < pane.left {
+            pane.left = selected.x
+        }
+        if selected.x + selected.label.width() > pane.left + tree - 2 {
+            pane.left = (selected.x + selected.label.width()).saturating_sub(tree - 2)
+        }
+        pane.focus = false;
+    }
+    pane.left = pane.left.min(layout.width.saturating_sub(tree - 2));
+    pane.top = pane.top.min(layout.height.saturating_sub(body));
+    area.paint(
+        out,
+        1,
+        1,
+        &pane.browser.root.borrow().path.to_string_lossy(),
+        Some(
+            pane.browser
+                .conf
+                .folder_color_for(&pane.browser.root.borrow().path),
+        ),
+        false,
+        false,
+        false,
+    )?;
+    let route = if pane.browser.conf.highlight_path {
+        layout.path_cells(
+            &pane.browser.selected,
+            pane.browser.conf.gap,
+            pane.left,
+            pane.top,
+            tree - 2,
+            body,
+        )
+    } else {
+        Default::default()
+    };
+    let mut ancestors = std::collections::HashSet::new();
+    let mut ancestor = Some(pane.browser.selected.clone());
+    while let Some(node) = ancestor {
+        ancestors.insert(Rc::as_ptr(&node) as usize);
+        ancestor = node.borrow().parent.upgrade();
+    }
+    for ((x, y), c) in layout.cells(pane.left, pane.top, tree - 2, body) {
+        let active = route.contains(&(x, y));
+        area.paint(
+            out,
+            y - pane.top + 3,
+            (x - pane.left + 1) as isize,
+            &c.to_string(),
+            Some(if active {
+                &pane.browser.conf.path_color
+            } else {
+                &pane.browser.conf.line_color
+            }),
+            false,
+            false,
+            pane.browser.conf.highlight_path && !active,
+        )?
+    }
+    for item in &layout.items {
+        if item.y >= pane.top && item.y < pane.top + body {
+            let n = item.node.borrow();
+            let color = if n.dir {
+                pane.browser.conf.folder_color_for(&n.path)
+            } else {
+                pane.browser
+                    .conf
+                    .rule(&n.path, &pane.browser.conf.extension_colors, false)
+                    .unwrap_or(&pane.browser.conf.file_color)
+            };
+            let dim = pane.browser.conf.highlight_path
+                && !ancestors.contains(&(Rc::as_ptr(&item.node) as usize));
+            area.paint(
+                out,
+                item.y - pane.top + 3,
+                item.x as isize - pane.left as isize + 1,
+                item.link_start
+                    .map_or(item.label.as_str(), |start| &item.label[..start]),
+                Some(color),
+                active
+                    && Rc::ptr_eq(&item.node, &pane.browser.selected)
+                    && pane.link_target.is_none(),
+                false,
+                dim,
+            )?;
+            if let Some(start) = item.link_start {
+                let target_selected =
+                    Rc::ptr_eq(&item.node, &pane.browser.selected) && pane.link_target.is_some();
+                let tail = &item.label[start..];
+                // Keep the connector's bold color; reverse only the target name.
+                let split = target_selected || area.mirrored;
+                let connector_end = if split { 6 } else { tail.len() };
+                area.paint(
+                    out,
+                    item.y - pane.top + 3,
+                    (item.x + item.label[..start].width()) as isize - pane.left as isize + 1,
+                    &tail[..connector_end],
+                    Some(&pane.browser.conf.link_color),
+                    false,
+                    true,
+                    dim,
+                )?;
+                if split {
+                    area.paint(
+                        out,
+                        item.y - pane.top + 3,
+                        (item.x + item.label[..start].width() + 6) as isize - pane.left as isize
+                            + 1,
+                        &tail[6..],
+                        Some(&pane.browser.conf.link_color),
+                        active && target_selected,
+                        true,
+                        dim,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+struct Pane {
     browser: Browser,
-    config_path: PathBuf,
     left: usize,
     top: usize,
     focus: bool,
+    query: String,
+    link_target: Option<PathBuf>,
+}
+impl Pane {
+    fn new(browser: Browser) -> Self {
+        Self {
+            browser,
+            left: 0,
+            top: 0,
+            focus: true,
+            query: String::new(),
+            link_target: None,
+        }
+    }
+}
+struct Ui {
+    pane: Pane,
+    other: Option<Pane>,
+    right_active: bool,
+    node_budget: usize,
+    config_path: PathBuf,
     dashboard: bool,
     meta_path: Option<PathBuf>,
     meta: String,
-    query: String,
     message: String,
     exit_directory: Option<PathBuf>,
-    link_target: Option<PathBuf>,
 }
 impl Ui {
+    fn rebudget(&mut self) {
+        self.pane.browser.conf.max_loaded = self.node_budget;
+        if let Some(other) = &mut self.other {
+            other.browser.conf.max_loaded = self.node_budget;
+        }
+    }
+    fn toggle_dual(&mut self) -> Result<(), String> {
+        if self.other.is_some() {
+            self.other = None;
+            self.right_active = false;
+            self.message = "单栏：保留当前目录".into();
+        } else {
+            let directory = files::exit_directory_path(&self.selection_path())?;
+            let mut conf = self.pane.browser.conf.clone();
+            conf.max_loaded = self.node_budget;
+            self.other = Some(Pane::new(Browser::new(&directory, conf)?));
+            self.message = "双栏：Tab 切换 · c/m 到另一侧 · 右栏 ← 展开 / → 父级".into();
+        }
+        self.pane.focus = true;
+        self.meta_path = None;
+        self.rebudget();
+        Ok(())
+    }
+    fn switch_pane(&mut self) {
+        if let Some(other) = &mut self.other {
+            std::mem::swap(&mut self.pane, other);
+            self.right_active = !self.right_active;
+            self.pane.focus = true;
+            self.meta_path = None;
+            self.message = if self.right_active {
+                "右侧：← 展开 · → 父级"
+            } else {
+                "左侧：→ 展开 · ← 父级"
+            }
+            .into();
+            self.rebudget();
+        }
+    }
     fn selection_path(&self) -> PathBuf {
-        self.link_target
+        self.pane
+            .link_target
             .clone()
-            .unwrap_or_else(|| self.browser.selected.borrow().path.clone())
+            .unwrap_or_else(|| self.pane.browser.selected.borrow().path.clone())
     }
     fn draw(&mut self) -> Result<(), String> {
         let (w, h) = terminal::size().map_err(ioerr)?;
         let (w, h) = (w as usize, h as usize);
         let mut out = io::stdout().lock();
         queue!(out, Clear(ClearType::All)).map_err(ioerr)?;
-        if w < 36 || h < 8 {
+        if w < if self.other.is_some() { 75 } else { 36 } || h < 8 {
             put(
                 &mut out,
                 0,
                 0,
-                &format!("请放大终端到 36×8；{} 退出", self.browser.conf.keys["quit"]),
+                &format!(
+                    "请放大终端到 {}×8；{} 单栏 / {} 退出",
+                    if self.other.is_some() { 75 } else { 36 },
+                    self.pane.browser.conf.keys["toggle_dual"],
+                    self.pane.browser.conf.keys["quit"]
+                ),
                 w,
                 None,
                 false,
             )?;
             return out.flush().map_err(ioerr);
         }
-        let panel = if self.dashboard && w >= 70 {
-            self.browser.conf.dashboard_columns(w)
+        let panel = if self.dashboard && w >= if self.other.is_some() { 110 } else { 70 } {
+            self.pane
+                .browser
+                .conf
+                .dashboard_columns(w)
+                .min(w - if self.other.is_some() { 77 } else { 38 })
         } else {
             0
         };
         let tree = w - panel - if panel > 0 { 2 } else { 0 };
         let body = h - 5;
-        let layout = Layout::new(&self.browser);
-        let selected = layout
-            .items
-            .iter()
-            .find(|p| Rc::ptr_eq(&p.node, &self.browser.selected))
-            .ok_or("选中节点不在树中")?;
-        if self.focus {
-            if selected.y < self.top {
-                self.top = selected.y
-            }
-            if selected.y >= self.top + body {
-                self.top = selected.y - body + 1
-            }
-            if selected.x < self.left {
-                self.left = selected.x
-            }
-            if selected.x + selected.label.width() > self.left + tree - 2 {
-                self.left = (selected.x + selected.label.width()).saturating_sub(tree - 2)
-            }
-            self.focus = false;
-        }
-        self.left = self.left.min(layout.width.saturating_sub(tree - 2));
-        self.top = self.top.min(layout.height.saturating_sub(body));
         put(&mut out, 0, 1, "filex", w, None, false)?;
-        put(
-            &mut out,
-            1,
-            1,
-            &self.browser.root.borrow().path.to_string_lossy(),
-            w,
-            Some(
-                self.browser
-                    .conf
-                    .folder_color_for(&self.browser.root.borrow().path),
-            ),
-            false,
-        )?;
-        let route = if self.browser.conf.highlight_path {
-            layout.path_cells(
-                &self.browser.selected,
-                self.browser.conf.gap,
-                self.left,
-                self.top,
-                tree - 2,
-                body,
-            )
-        } else {
-            Default::default()
-        };
-        let mut ancestors = std::collections::HashSet::new();
-        let mut ancestor = Some(self.browser.selected.clone());
-        while let Some(node) = ancestor {
-            ancestors.insert(Rc::as_ptr(&node) as usize);
-            ancestor = node.borrow().parent.upgrade();
-        }
-        for ((x, y), c) in layout.cells(self.left, self.top, tree - 2, body) {
-            let active = route.contains(&(x, y));
-            put_styled(
-                &mut out,
-                y - self.top + 3,
-                (x - self.left + 1) as isize,
-                &c.to_string(),
-                tree,
-                Some(if active {
-                    &self.browser.conf.path_color
-                } else {
-                    &self.browser.conf.line_color
-                }),
-                false,
-                false,
-                self.browser.conf.highlight_path && !active,
-            )?
-        }
-        for item in &layout.items {
-            if item.y >= self.top && item.y < self.top + body {
-                let n = item.node.borrow();
-                let color = if n.dir {
-                    self.browser.conf.folder_color_for(&n.path)
-                } else {
-                    self.browser
-                        .conf
-                        .rule(&n.path, &self.browser.conf.extension_colors, false)
-                        .unwrap_or(&self.browser.conf.file_color)
-                };
-                let dim = self.browser.conf.highlight_path
-                    && !ancestors.contains(&(Rc::as_ptr(&item.node) as usize));
-                put_styled(
-                    &mut out,
-                    item.y - self.top + 3,
-                    item.x as isize - self.left as isize + 1,
-                    &item.label,
-                    tree,
-                    Some(color),
-                    Rc::ptr_eq(&item.node, &self.browser.selected) && self.link_target.is_none(),
-                    false,
-                    dim,
-                )?;
-                if let Some(start) = item.link_start {
-                    let target_selected = Rc::ptr_eq(&item.node, &self.browser.selected)
-                        && self.link_target.is_some();
-                    let tail = &item.label[start..];
-                    // Keep the connector's bold color; reverse only the target name.
-                    let connector_end = if target_selected { 6 } else { tail.len() };
-                    put_styled(
-                        &mut out,
-                        item.y - self.top + 3,
-                        (item.x + item.label[..start].width()) as isize - self.left as isize + 1,
-                        &tail[..connector_end],
-                        tree,
-                        Some(&self.browser.conf.link_color),
-                        false,
-                        true,
-                        dim,
-                    )?;
-                    if target_selected {
-                        put_styled(
-                            &mut out,
-                            item.y - self.top + 3,
-                            (item.x + item.label[..start].width() + 6) as isize
-                                - self.left as isize
-                                + 1,
-                            &tail[6..],
-                            tree,
-                            Some(&self.browser.conf.link_color),
-                            true,
-                            true,
-                            false,
-                        )?;
-                    }
-                }
+        if let Some(other) = &mut self.other {
+            let middle = tree / 2;
+            let left_area = TreeArea {
+                x: 0,
+                width: middle,
+                mirrored: false,
+            };
+            let right_area = TreeArea {
+                x: middle + 1,
+                width: tree - middle - 1,
+                mirrored: true,
+            };
+            if self.right_active {
+                draw_tree(&mut out, other, left_area, body, false)?;
+                draw_tree(&mut out, &mut self.pane, right_area, body, true)?;
+            } else {
+                draw_tree(&mut out, &mut self.pane, left_area, body, true)?;
+                draw_tree(&mut out, other, right_area, body, false)?;
             }
+            for y in 0..h - 2 {
+                put(
+                    &mut out,
+                    y,
+                    middle as isize,
+                    "│",
+                    tree,
+                    Some(&self.pane.browser.conf.line_color),
+                    false,
+                )?;
+            }
+            put(
+                &mut out,
+                0,
+                1,
+                if self.right_active {
+                    "filex 左"
+                } else {
+                    "filex 左 ●"
+                },
+                middle,
+                None,
+                false,
+            )?;
+            put(
+                &mut out,
+                0,
+                (middle + 2) as isize,
+                if self.right_active { "右 ●" } else { "右" },
+                tree,
+                None,
+                false,
+            )?;
+        } else {
+            draw_tree(
+                &mut out,
+                &mut self.pane,
+                TreeArea {
+                    x: 0,
+                    width: tree,
+                    mirrored: false,
+                },
+                body,
+                true,
+            )?;
         }
         if panel > 0 {
             for y in 3..h - 2 {
@@ -362,14 +567,17 @@ impl Ui {
                     tree as isize,
                     "│",
                     w,
-                    Some(&self.browser.conf.line_color),
+                    Some(&self.pane.browser.conf.line_color),
                     false,
                 )?
             }
             let path = self.selection_path();
             if self.meta_path.as_ref() != Some(&path) {
-                self.meta =
-                    files::dashboard(&path, &self.browser.root.borrow().path, &self.browser.conf);
+                self.meta = files::dashboard(
+                    &path,
+                    &self.pane.browser.root.borrow().path,
+                    &self.pane.browser.conf,
+                );
                 self.meta_path = Some(path)
             }
             put(
@@ -378,8 +586,8 @@ impl Ui {
                 (tree + 2) as isize,
                 &format!(
                     "Dashboard · q 收起 · {} / {} 调宽",
-                    self.browser.conf.keys["dashboard_narrow"],
-                    self.browser.conf.keys["dashboard_widen"]
+                    self.pane.browser.conf.keys["dashboard_narrow"],
+                    self.pane.browser.conf.keys["dashboard_widen"]
                 ),
                 w,
                 None,
@@ -389,11 +597,12 @@ impl Ui {
                 put(&mut out, 4 + i, (tree + 2) as isize, line, w, None, false)?
             }
         }
-        let selected = self.browser.selected.borrow();
-        let detail = if let Some(target) = &self.link_target {
+        let selected = self.pane.browser.selected.borrow();
+        let detail = if let Some(target) = &self.pane.link_target {
             format!(
-                "链接目标: {} · ← 返回链接 · x 进入目标目录",
-                target.display()
+                "链接目标: {} · {} 返回链接 · x 进入目标目录",
+                target.display(),
+                if self.right_active { "→" } else { "←" }
             )
         } else if !selected.error.is_empty() {
             selected.error.clone()
@@ -423,12 +632,18 @@ impl Ui {
             h - 1,
             1,
             &format!(
-                "{} {}收起 {}重命名 Ctrl+Alt+C路径 Enter打开 {}信息 {}退出 ?帮助",
-                self.browser.conf.arrow_hint(),
-                self.browser.conf.keys["collapse"],
-                self.browser.conf.keys["rename"],
-                self.browser.conf.keys["dashboard"],
-                self.browser.conf.keys["quit"]
+                "{} {}收起 {}重命名 Ctrl+Alt+C路径 Enter打开 {}信息 {}退出 {}双栏 {}切换 ?帮助",
+                if self.right_active {
+                    "↑↓ 同层循环 → 父级 ← 展开"
+                } else {
+                    self.pane.browser.conf.arrow_hint()
+                },
+                self.pane.browser.conf.keys["collapse"],
+                self.pane.browser.conf.keys["rename"],
+                self.pane.browser.conf.keys["dashboard"],
+                self.pane.browser.conf.keys["quit"],
+                self.pane.browser.conf.keys["toggle_dual"],
+                self.pane.browser.conf.keys["switch_pane"]
             ),
             w,
             None,
@@ -460,7 +675,7 @@ impl Ui {
             .map_err(ioerr)?;
             out.flush().map_err(ioerr)?;
             drop(out);
-            let key = read_key(self.browser.conf.auto_english)?;
+            let key = read_key(self.pane.browser.conf.auto_english)?;
             match key.as_str() {
                 "enter" => {
                     execute!(io::stdout(), Hide).map_err(ioerr)?;
@@ -507,7 +722,7 @@ impl Ui {
             )?;
             out.flush().map_err(ioerr)?;
             drop(out);
-            match read_key(self.browser.conf.auto_english)?.as_str() {
+            match read_key(self.pane.browser.conf.auto_english)?.as_str() {
                 "escape" | "q" | "enter" => return Ok(()),
                 "down" | "j" => top = (top + 1).min(rows.len().saturating_sub(body)),
                 "up" | "k" => top = top.saturating_sub(1),
@@ -555,7 +770,7 @@ impl Ui {
             )?;
             out.flush().map_err(ioerr)?;
             drop(out);
-            match read_key(self.browser.conf.auto_english)?.as_str() {
+            match read_key(self.pane.browser.conf.auto_english)?.as_str() {
                 "escape" => return Ok(None),
                 "enter" => return Ok(Some(selected)),
                 "down" | "j" => selected = (selected + 1) % options.len(),
@@ -566,15 +781,15 @@ impl Ui {
     }
     fn open(&mut self, method: &str) -> Result<(), String> {
         let path = self.selection_path();
-        let (mut command, terminal) = files::open_command(&path, &self.browser.conf, method)?;
+        let (mut command, terminal) = files::open_command(&path, &self.pane.browser.conf, method)?;
         if terminal
-            && self.browser.conf.tmux_right
+            && self.pane.browser.conf.tmux_right
             && let Some(pane) = tmux::open_in_right_pane(&command)
         {
             self.meta_path = None;
             self.message = format!(
                 "已用 {} 在右侧 pane {pane} 打开",
-                self.browser.conf.openers[method].label
+                self.pane.browser.conf.openers[method].label
             );
             return Ok(());
         }
@@ -592,13 +807,13 @@ impl Ui {
             )
             .map_err(ioerr)?;
             let mut result = command.status().map_err(ioerr);
-            if self.browser.conf.openers[method].pause_on_exit
+            if self.pane.browser.conf.openers[method].pause_on_exit
                 && let Ok(status) = &result
             {
                 println!("\n程序结束 ({status}) · 按 Enter 返回 filex");
                 terminal::enable_raw_mode().map_err(ioerr)?;
                 loop {
-                    match read_key(self.browser.conf.auto_english) {
+                    match read_key(self.pane.browser.conf.auto_english) {
                         Ok(key) if ["enter", "escape", "\x03"].contains(&key.as_str()) => break,
                         Ok(_) => {}
                         Err(error) => {
@@ -634,26 +849,28 @@ impl Ui {
                 .map_err(ioerr)?;
         }
         self.meta_path = None;
-        self.message = format!("已用 {} 打开", self.browser.conf.openers[method].label);
+        self.message = format!("已用 {} 打开", self.pane.browser.conf.openers[method].label);
         Ok(())
     }
     fn choose_open(&mut self) -> Result<(), String> {
-        let node = self.browser.selected.clone();
+        let node = self.pane.browser.selected.clone();
         let path = self.selection_path();
-        let dir = if self.link_target.is_some() {
+        let dir = if self.pane.link_target.is_some() {
             path.is_dir()
         } else {
             node.borrow().dir
         };
         let default = self
+            .pane
             .browser
             .conf
-            .rule(&path, &self.browser.conf.defaults, dir)
+            .rule(&path, &self.pane.browser.conf.defaults, dir)
             .cloned()
             .unwrap_or("system".into());
         let mut ids = vec![default.clone()];
         ids.extend(
-            self.browser
+            self.pane
+                .browser
                 .conf
                 .openers
                 .keys()
@@ -663,7 +880,7 @@ impl Ui {
         let mut options: Vec<(Option<String>, String)> = ids
             .iter()
             .map(|id| {
-                let opener = &self.browser.conf.openers[id];
+                let opener = &self.pane.browser.conf.openers[id];
                 (
                     Some(id.clone()),
                     format!(
@@ -679,7 +896,7 @@ impl Ui {
                 )
             })
             .collect();
-        if dir && self.link_target.is_none() {
+        if dir && self.pane.link_target.is_none() {
             options.insert(0, (None, "fileX 展开 / 收起目录".into()));
         }
         if let Some(index) = self.choose(&format!("打开方式: {}", path.display()), &options)? {
@@ -688,7 +905,7 @@ impl Ui {
             } else if node.borrow().expanded {
                 node.borrow_mut().expanded = false
             } else {
-                self.browser.expand(&node, None)
+                self.pane.browser.expand(&node, None)
             }
         }
         Ok(())
@@ -724,7 +941,7 @@ impl Ui {
             )?;
             out.flush().map_err(ioerr)?;
             drop(out);
-            match read_key(self.browser.conf.auto_english)?.as_str() {
+            match read_key(self.pane.browser.conf.auto_english)?.as_str() {
                 "enter" => return Ok(true),
                 "escape" | "\x03" => return Ok(false),
                 _ => {}
@@ -732,14 +949,20 @@ impl Ui {
         }
     }
     fn operation(&mut self, action: &str) -> Result<(), String> {
-        if self.link_target.is_some() {
-            return Err("请按 ← 选回链接，或按 f 进入目标目录后操作文件".into());
+        if self.pane.link_target.is_some() {
+            return Err(format!(
+                "请按 {} 选回链接，或按 f 进入目标目录后操作文件",
+                if self.right_active { "→" } else { "←" }
+            ));
         }
-        let source = self.browser.selected.borrow().path.clone();
-        if Rc::ptr_eq(&self.browser.selected, &self.browser.root)
+        let source = self.pane.browser.selected.borrow().path.clone();
+        if Rc::ptr_eq(&self.pane.browser.selected, &self.pane.browser.root)
             && ["rename", "move", "trash"].contains(&action)
         {
-            return Err("不能操作当前根目录；先按 ← 引入其父目录".into());
+            return Err(format!(
+                "不能操作当前根目录；先按 {} 引入其父目录",
+                if self.right_active { "→" } else { "←" }
+            ));
         }
         let dest = match action {
             "trash" => {
@@ -757,7 +980,18 @@ impl Ui {
                     "copy" => "复制到完整目标路径（含名称）",
                     _ => "移动到完整目标路径（含名称）",
                 };
-                let initial = if action == "rename" {
+                let initial = if ["copy", "move"].contains(&action)
+                    && let Some(other) = &self.other
+                {
+                    let path = other
+                        .link_target
+                        .clone()
+                        .unwrap_or_else(|| other.browser.selected.borrow().path.clone());
+                    files::exit_directory_path(&path)?
+                        .join(source.file_name().ok_or("源名称无效")?)
+                        .to_string_lossy()
+                        .into_owned()
+                } else if action == "rename" {
                     source
                         .file_name()
                         .unwrap_or_default()
@@ -774,14 +1008,20 @@ impl Ui {
                 }
                 match action {
                     "new_file" | "new_folder" => {
-                        let target = self.browser.target();
+                        let target = self.pane.browser.target();
                         let path = files::create(&target, &value, action == "new_folder")?;
-                        let parent = if self.browser.selected.borrow().dir {
-                            self.browser.selected.clone()
+                        let parent = if self.pane.browser.selected.borrow().dir {
+                            self.pane.browser.selected.clone()
                         } else {
-                            self.browser.selected.borrow().parent.upgrade().unwrap()
+                            self.pane
+                                .browser
+                                .selected
+                                .borrow()
+                                .parent
+                                .upgrade()
+                                .unwrap()
                         };
-                        self.browser.expand(&parent, Some(&path));
+                        self.pane.browser.expand(&parent, Some(&path));
                         path
                     }
                     "rename" => {
@@ -798,24 +1038,50 @@ impl Ui {
                 }
             }
         };
-        self.browser.refresh();
+        self.pane.browser.refresh();
+        if let Some(other) = &mut self.other {
+            other.browser.conf.max_loaded = self.node_budget;
+            other.browser.refresh();
+            if let Some(parent) = other
+                .browser
+                .visible()
+                .into_iter()
+                .find(|node| node.borrow().path == dest.parent().unwrap_or(Path::new("/")))
+                && parent.borrow().expanded
+            {
+                other.browser.expand(&parent, Some(&dest));
+            }
+            other.link_target = None;
+        }
         if let Some(node) = self
+            .pane
             .browser
             .visible()
             .into_iter()
             .find(|n| n.borrow().path == dest)
         {
-            self.browser.selected = node
+            self.pane.browser.selected = node
         }
         self.meta_path = None;
         self.message = format!("完成: {}", dest.display());
         Ok(())
     }
     fn action(&mut self, key: &str) -> Result<bool, String> {
+        self.rebudget();
+        let navigation_key = if self.right_active {
+            match key {
+                "left" => "right",
+                "right" => "left",
+                _ => key,
+            }
+        } else {
+            key
+        };
         let action = self
+            .pane
             .browser
             .conf
-            .arrow_action(key)
+            .arrow_action(navigation_key)
             .unwrap_or_else(|| match key {
                 " " => "expand",
                 "enter" => "open_with",
@@ -823,7 +1089,7 @@ impl Ui {
                 "f5" | "ctrl+f5" => "refresh",
                 "\x06" | "/" => "search",
                 "\x0c" => "goto",
-                _ => self.browser.conf.action(key).unwrap_or(""),
+                _ => self.pane.browser.conf.action(key).unwrap_or(""),
             })
             .to_string();
         if matches!(
@@ -841,9 +1107,11 @@ impl Ui {
                 | "previous_match"
         ) || matches!(key, "home" | "end" | "pageup" | "pagedown" | "escape")
         {
-            self.link_target = None;
+            self.pane.link_target = None;
         }
         match action.as_str() {
+            "toggle_dual" => self.toggle_dual()?,
+            "switch_pane" => self.switch_pane(),
             "quit" => return Ok(true),
             "exit_here" => {
                 self.exit_directory = Some(files::exit_directory(&self.selection_path())?);
@@ -852,88 +1120,111 @@ impl Ui {
             "dashboard" => {
                 self.dashboard = !self.dashboard;
                 self.meta_path = None;
-                if self.dashboard && terminal::size().map_err(ioerr)?.0 < 70 {
-                    self.message = "Dashboard 需要至少 70 列".into()
+                if self.dashboard
+                    && (terminal::size().map_err(ioerr)?.0 as usize)
+                        < if self.other.is_some() { 110 } else { 70 }
+                {
+                    self.message = format!(
+                        "Dashboard 需要至少 {} 列",
+                        if self.other.is_some() { 110 } else { 70 }
+                    )
                 }
             }
             "dashboard_narrow" | "dashboard_widen" => {
                 let width = terminal::size().map_err(ioerr)?.0 as usize;
-                if width < 70 {
-                    self.message = "Dashboard 需要至少 70 列".into();
+                if width < if self.other.is_some() { 110 } else { 70 } {
+                    self.message = format!(
+                        "Dashboard 需要至少 {} 列",
+                        if self.other.is_some() { 110 } else { 70 }
+                    );
                 } else {
-                    let current = self.browser.conf.dashboard_columns(width);
+                    let current = self.pane.browser.conf.dashboard_columns(width);
                     let desired = if action == "dashboard_narrow" {
                         current.saturating_sub(4)
                     } else {
                         current + 4
                     };
-                    self.browser.conf.dashboard_width = desired.clamp(20, (width - 38).min(240));
+                    self.pane.browser.conf.dashboard_width = desired.clamp(
+                        20,
+                        (width - if self.other.is_some() { 77 } else { 38 }).min(240),
+                    );
                     self.dashboard = true;
-                    self.message =
-                        format!("信息面板宽度: {} 列", self.browser.conf.dashboard_width);
+                    self.message = format!(
+                        "信息面板宽度: {} 列",
+                        self.pane.browser.conf.dashboard_width
+                    );
                 }
             }
-            "up" => self.browser.step(-1),
-            "down" => self.browser.step(1),
+            "up" => self.pane.browser.step(-1),
+            "down" => self.pane.browser.step(1),
             "expand" => {
-                if self.link_target.is_none() {
-                    if self.browser.selected.borrow().link {
-                        let target = files::link_target(&self.browser.selected.borrow().path)?;
-                        self.link_target = Some(target);
+                if self.pane.link_target.is_none() {
+                    if self.pane.browser.selected.borrow().link {
+                        let target = files::link_target(&self.pane.browser.selected.borrow().path)?;
+                        self.pane.link_target = Some(target);
                         self.meta_path = None;
                     } else {
-                        self.browser.right();
+                        self.pane.browser.right();
                     }
                 }
             }
-            "collapse" => self.browser.left(),
+            "collapse" => self.pane.browser.left(),
             "expand_all" => {
                 self.message = "正在展开…".into();
                 self.draw()?;
-                self.message = self.browser.expand_all()?
+                self.message = self.pane.browser.expand_all()?
             }
-            "collapse_all" => self.message = self.browser.collapse_all()?,
+            "collapse_all" => self.message = self.pane.browser.collapse_all()?,
             "parent" => {
-                if self.link_target.take().is_none() {
-                    self.message = self.browser.back()?;
-                    self.left = 0;
-                    self.top = 0;
+                if self.pane.link_target.take().is_none() {
+                    self.message = self.pane.browser.back()?;
+                    self.pane.left = 0;
+                    self.pane.top = 0;
                 }
             }
             "focus_root" => {
-                if let Some(target) = &self.link_target {
+                if let Some(target) = &self.pane.link_target {
                     let folder = files::exit_directory_path(target)?;
-                    self.browser.set_root(&folder.to_string_lossy())?;
-                    self.link_target = None;
+                    self.pane.browser.set_root(&folder.to_string_lossy())?;
+                    self.pane.link_target = None;
                     self.message = format!("根目录: {}", folder.display());
                 } else {
-                    self.message = self.browser.focus_root();
+                    self.message = self.pane.browser.focus_root();
                 }
-                self.query.clear();
+                self.pane.query.clear();
                 self.meta_path = None;
-                self.left = 0;
-                self.top = 0;
+                self.pane.left = 0;
+                self.pane.top = 0;
             }
             "hidden" => {
-                self.browser.conf.hidden = !self.browser.conf.hidden;
-                self.browser.refresh()
+                self.pane.browser.conf.hidden = !self.pane.browser.conf.hidden;
+                self.pane.browser.refresh()
             }
             "copy_path" => {
                 files::copy_path(&self.selection_path())?;
                 self.message = "已复制绝对路径".into();
             }
             "refresh" => {
-                self.browser.refresh();
+                self.pane.browser.refresh();
                 self.meta_path = None
             }
             "config" => {
-                self.browser.conf = Config::load(&self.config_path)?;
-                self.browser.refresh();
+                self.pane.browser.conf = Config::load(&self.config_path)?;
+                self.node_budget = self.pane.browser.conf.max_loaded;
+                if let Some(other) = &mut self.other {
+                    other.browser.conf = self.pane.browser.conf.clone();
+                    other.browser.conf.max_loaded = self.node_budget;
+                    other.link_target = None;
+                    other.browser.refresh();
+                }
+                self.rebudget();
+                self.pane.browser.refresh();
                 self.meta_path = None;
                 self.message = "配置已重新读取".into()
             }
             "goto" => {
                 let path = self
+                    .pane
                     .browser
                     .root
                     .borrow()
@@ -943,56 +1234,61 @@ impl Ui {
                 if let Some(value) = self.prompt("进入目录", &path)?
                     && !value.is_empty()
                 {
-                    self.browser.set_root(&value)?;
-                    self.left = 0;
-                    self.top = 0
+                    self.pane.browser.set_root(&value)?;
+                    self.pane.left = 0;
+                    self.pane.top = 0
                 }
             }
             "search" => {
-                let query = self.query.clone();
+                let query = self.pane.query.clone();
                 if let Some(value) = self.prompt("搜索根目录（含未展开目录）", &query)?
                 {
-                    self.query = value;
-                    if !self.query.is_empty() {
+                    self.pane.query = value;
+                    if !self.pane.query.is_empty() {
                         self.message = "正在搜索…".into();
                         self.draw()?;
-                        self.browser.search_key = None;
-                        self.message = self.browser.find_next(&self.query, 1)?
+                        self.pane.browser.search_key = None;
+                        self.message = self.pane.browser.find_next(&self.pane.query, 1)?
                     }
                 }
             }
             "next_match" | "previous_match" => {
-                if !self.query.is_empty() {
-                    self.message = self
-                        .browser
-                        .find_next(&self.query, if action == "next_match" { 1 } else { -1 })?
+                if !self.pane.query.is_empty() {
+                    self.message = self.pane.browser.find_next(
+                        &self.pane.query,
+                        if action == "next_match" { 1 } else { -1 },
+                    )?
                 }
             }
             "open_with" => self.choose_open()?,
             "open" => {
                 let path = self.selection_path();
-                let dir = if self.link_target.is_some() {
+                let dir = if self.pane.link_target.is_some() {
                     path.is_dir()
                 } else {
-                    self.browser.selected.borrow().dir
+                    self.pane.browser.selected.borrow().dir
                 };
                 let method = self
+                    .pane
                     .browser
                     .conf
-                    .rule(&path, &self.browser.conf.defaults, dir)
+                    .rule(&path, &self.pane.browser.conf.defaults, dir)
                     .cloned()
                     .unwrap_or("system".into());
                 self.open(&method)?
             }
             "link_info" => {
                 let path = self.selection_path();
-                let text =
-                    files::dashboard(&path, &self.browser.root.borrow().path, &self.browser.conf);
+                let text = files::dashboard(
+                    &path,
+                    &self.pane.browser.root.borrow().path,
+                    &self.pane.browser.conf,
+                );
                 self.pager("文件 / 链接信息", &text)?;
             }
             "preview" => {
                 let path = self.selection_path();
-                let text = files::preview(&path, self.browser.conf.preview_bytes);
+                let text = files::preview(&path, self.pane.browser.conf.preview_bytes);
                 self.pager(&path.to_string_lossy(), &text)?
             }
             "new_file" | "new_folder" | "rename" | "copy" | "move" | "trash" => {
@@ -1000,6 +1296,7 @@ impl Ui {
             }
             "help" => {
                 let mut text = self
+                    .pane
                     .browser
                     .conf
                     .keys
@@ -1007,29 +1304,41 @@ impl Ui {
                     .map(|(action, key)| format!("{key:12} {action}"))
                     .collect::<Vec<_>>()
                     .join("\n");
-                text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C 复制选中项目的绝对路径\nf 当前目录设为根并刷新\nEnter 选择打开方式 · o 扩展名默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\n复制 / 移动填写完整目标路径，不覆盖已有目标。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
+                text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C 复制选中项目的绝对路径\nf 当前目录设为根并刷新\nEnter 选择打开方式 · o 扩展名默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nv 双栏开关 · Tab 切换操作侧 · 右栏 ← 展开 / → 父级\n双栏 c/m 预填另一侧目录的完整目标路径，Enter 执行 / Esc 取消\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\n复制 / 移动填写完整目标路径，不覆盖已有目标。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
                 self.pager("filex 快捷键", &text)?
             }
             _ => match key {
                 "escape" => {
-                    self.query.clear();
+                    self.pane.query.clear();
                     self.message.clear()
                 }
                 "\x03" => return Ok(true),
+                "H" | "L" if self.right_active => {
+                    self.pane.left = if key == "H" {
+                        self.pane.left + 12
+                    } else {
+                        self.pane.left.saturating_sub(12)
+                    };
+                    self.pane.focus = false
+                }
                 "H" => {
-                    self.left = self.left.saturating_sub(12);
-                    self.focus = false
+                    self.pane.left = self.pane.left.saturating_sub(12);
+                    self.pane.focus = false
                 }
                 "L" => {
-                    self.left += 12;
-                    self.focus = false
+                    self.pane.left += 12;
+                    self.pane.focus = false
                 }
-                "home" => self.browser.selected = self.browser.root.clone(),
-                "end" => self.browser.selected = self.browser.visible().last().unwrap().clone(),
+                "home" => self.pane.browser.selected = self.pane.browser.root.clone(),
+                "end" => {
+                    self.pane.browser.selected = self.pane.browser.visible().last().unwrap().clone()
+                }
                 "pageup" => self
+                    .pane
                     .browser
                     .step(-(terminal::size().map_err(ioerr)?.1.saturating_sub(5) as isize)),
                 "pagedown" => self
+                    .pane
                     .browser
                     .step(terminal::size().map_err(ioerr)?.1.saturating_sub(5) as isize),
                 _ => {}
@@ -1044,24 +1353,27 @@ pub fn run(browser: Browser, path: PathBuf) -> Result<Option<PathBuf>, String> {
     let _tmux_keys = crate::terminal_host::TmuxKeys::new(browser.conf.tmux_extended_keys);
     let _tmux_focus = crate::terminal_host::TmuxFocus::new(true);
     let _guard = Guard::new()?;
+    let dual = browser.conf.dual_pane;
+    let budget = browser.conf.max_loaded;
     let mut ui = Ui {
-        browser,
+        pane: Pane::new(browser),
+        other: None,
+        right_active: false,
+        node_budget: budget,
         config_path: path,
-        left: 0,
-        top: 0,
-        focus: true,
         dashboard: false,
         meta_path: None,
         meta: String::new(),
-        query: String::new(),
         message: String::new(),
         exit_directory: None,
-        link_target: None,
     };
+    if dual {
+        ui.toggle_dual()?;
+    }
     loop {
         ui.draw()?;
-        let key = read_key(ui.browser.conf.auto_english)?;
-        ui.focus = true;
+        let key = read_key(ui.pane.browser.conf.auto_english)?;
+        ui.pane.focus = true;
         if !["H", "L", "resize"].contains(&key.as_str()) {
             ui.message.clear()
         }
@@ -1072,4 +1384,112 @@ pub fn run(browser: Browser, path: PathBuf) -> Result<Option<PathBuf>, String> {
         }
     }
     Ok(ui.exit_directory)
+}
+
+#[cfg(test)]
+mod dual_tests {
+    use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    struct Fixture(PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "filex-dual-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            for i in 0..8 {
+                let folder = root.join(format!("branch{i}"));
+                fs::create_dir_all(&folder).unwrap();
+                for j in 0..30 {
+                    fs::write(folder.join(format!("file{j}.txt")), "test").unwrap();
+                }
+            }
+            Self(root)
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    fn ui(root: &Path) -> Ui {
+        let conf = Config {
+            max_loaded: 100,
+            ..Config::default()
+        };
+        Ui {
+            pane: Pane::new(Browser::new(root, conf).unwrap()),
+            other: None,
+            right_active: false,
+            node_budget: 100,
+            config_path: root.join("settings.conf"),
+            dashboard: false,
+            meta_path: None,
+            meta: String::new(),
+            message: String::new(),
+            exit_directory: None,
+        }
+    }
+    #[test]
+    fn mirror_keeps_text_readable_and_clips_within_its_region() {
+        let area = TreeArea {
+            x: 41,
+            width: 40,
+            mirrored: true,
+        };
+        let mut out = Vec::new();
+        area.paint(&mut out, 3, 4, "▸ 文件", None, false, false, false)
+            .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("\x1b[4;72H"));
+        assert!(text.contains("◂ 文件"));
+        let mut out = Vec::new();
+        area.paint(&mut out, 3, 2, "├", None, false, false, false)
+            .unwrap();
+        assert!(String::from_utf8(out).unwrap().contains('┤'));
+        let mut out = Vec::new();
+        area.paint(&mut out, 3, 100, "outside", None, false, false, false)
+            .unwrap();
+        assert!(out.is_empty());
+    }
+    #[test]
+    fn independent_selection_mirrored_arrows_and_bounded_pane_caches() {
+        let f = Fixture::new();
+        let mut ui = ui(&f.0);
+        ui.action("v").unwrap();
+        ui.action("right").unwrap();
+        let left = ui.pane.browser.selected.clone();
+        ui.action("\t").unwrap();
+        assert!(ui.right_active);
+        ui.action("left").unwrap();
+        let right = ui.pane.browser.selected.clone();
+        ui.action("left").unwrap();
+        ui.action("left").unwrap();
+        assert!(ui.pane.browser.selected.borrow().path.extension().is_some());
+        ui.action("right").unwrap();
+        assert!(Rc::ptr_eq(&ui.pane.browser.selected, &right));
+        ui.action("\t").unwrap();
+        assert!(Rc::ptr_eq(&ui.pane.browser.selected, &left));
+        ui.rebudget();
+        ui.pane.browser.expand_all().unwrap();
+        ui.switch_pane();
+        ui.pane.browser.expand_all().unwrap();
+        assert!(
+            ui.pane.browser.loaded() + ui.other.as_ref().unwrap().browser.loaded()
+                <= ui.node_budget * 2
+        );
+        let retained = ui.pane.browser.root.clone();
+        ui.toggle_dual().unwrap();
+        assert!(ui.other.is_none());
+        assert!(!ui.right_active);
+        assert!(Rc::ptr_eq(&ui.pane.browser.root, &retained));
+        assert_eq!(ui.pane.browser.conf.max_loaded, 100);
+    }
 }

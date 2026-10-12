@@ -261,7 +261,7 @@ fn old_config_migrates_to_horizontal_and_new_shortcuts() {
     let conf = Config::load(&path).unwrap();
     assert_eq!(conf.action("left"), Some("parent"));
     assert_eq!(conf.action("u"), None);
-    assert_eq!(conf.action("v"), None);
+    assert_eq!(conf.action("v"), Some("toggle_dual"));
     assert_eq!(conf.action("r"), Some("rename"));
     assert_eq!(conf.action("R"), Some("rename"));
     assert_eq!(conf.action("\x12"), Some("refresh"));

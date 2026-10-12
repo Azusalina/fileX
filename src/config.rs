@@ -25,6 +25,7 @@ pub struct Config {
     pub label_width: usize,
     pub row_spacing: usize,
     pub highlight_path: bool,
+    pub dual_pane: bool,
     pub tmux_right: bool,
     pub auto_english: bool,
     pub konsole_shortcuts: bool,
@@ -75,6 +76,9 @@ pub fn expand_home(value: &str) -> PathBuf {
     }
 }
 pub fn key_code(value: &str) -> String {
+    if value.eq_ignore_ascii_case("Tab") {
+        return "\t".into();
+    }
     let lowered = value.to_ascii_lowercase();
     if lowered == "ctrl+f5" {
         return lowered;
@@ -133,6 +137,8 @@ impl Default for Config {
             ("trash", "D"),
             ("help", "?"),
             ("config", ","),
+            ("toggle_dual", "v"),
+            ("switch_pane", "Tab"),
         ]
         .into_iter()
         .map(|(a, b)| (a.into(), b.into()))
@@ -193,6 +199,7 @@ impl Default for Config {
             label_width: 32,
             row_spacing: 1,
             highlight_path: true,
+            dual_pane: false,
             tmux_right: true,
             auto_english: true,
             konsole_shortcuts: true,
@@ -359,6 +366,9 @@ impl Config {
                     ("layout", "row_spacing") => conf.row_spacing = number(value, key, 1, 4)?,
                     ("layout", "highlight_path") => {
                         conf.highlight_path = value.as_bool().ok_or("highlight_path 应为布尔值")?
+                    }
+                    ("layout", "dual_pane") => {
+                        conf.dual_pane = value.as_bool().ok_or("dual_pane 应为布尔值")?
                     }
                     // Ignore retired options so existing user configurations still load.
                     ("layout", "orientation") | ("keys", "toggle_tree") => {}
@@ -531,6 +541,7 @@ impl Config {
             ("link_info", &["i", "B", "T", "Ctrl+Alt+i"][..]),
             ("dashboard_narrow", &["{", "-", "Ctrl+Alt+b"][..]),
             ("dashboard_widen", &["}", "+", "Ctrl+Alt+w"][..]),
+            ("toggle_dual", &["V", "Ctrl+Alt+v"][..]),
         ] {
             if table
                 .get("keys")
@@ -572,8 +583,7 @@ impl Config {
                 && !named_control)
                 || (code == *key && key.chars().any(char::is_control))
                 || [
-                    "\n", "\r", "\t", " ", "\x1b", "\x03", "\x15", "\x13", "\x11", "\x1a", "H",
-                    "L", ":",
+                    "\n", "\r", " ", "\x1b", "\x03", "\x15", "\x13", "\x11", "\x1a", "H", "L", ":",
                 ]
                 .contains(&code.as_str())
             {
@@ -586,6 +596,7 @@ impl Config {
                 || code == "ctrl+alt+c" && action != "copy_path"
                 || code == "\x0e" && action != "new_file"
                 || code == "ctrl+shift+n" && action != "new_folder"
+                || code == "\t" && action != "switch_pane"
             {
                 return Err(
                     "Ctrl+F / Ctrl+L / Shift+R / Ctrl+Alt+C 保留给搜索 / 路径 / 重命名 / 复制路径"
