@@ -378,8 +378,13 @@ pub fn copy_path(path: &Path) -> Result<(), String> {
     written.map_err(err)
 }
 
-/// Communicate a NUL-terminated pathname to the waiting shell function.
-pub fn exit_directory(path: &Path) -> Result<PathBuf, String> {
+/// Resolve relative / chained symlinks only when their target is selected.
+pub fn link_target(path: &Path) -> Result<PathBuf, String> {
+    fs::read_link(path).map_err(|e| format!("读取链接目标失败: {e}"))?;
+    fs::canonicalize(path).map_err(|e| format!("链接目标不可访问: {e}"))
+}
+
+pub fn exit_directory_path(path: &Path) -> Result<PathBuf, String> {
     fs::symlink_metadata(path).map_err(err)?;
     let directory = if path.is_dir() {
         path
@@ -389,7 +394,12 @@ pub fn exit_directory(path: &Path) -> Result<PathBuf, String> {
     if !directory.is_dir() {
         return Err("目标目录已移除或不可访问".into());
     }
-    let directory = std::path::absolute(directory).map_err(err)?;
+    std::path::absolute(directory).map_err(err)
+}
+
+/// Communicate a NUL-terminated pathname to the waiting shell function.
+pub fn exit_directory(path: &Path) -> Result<PathBuf, String> {
+    let directory = exit_directory_path(path)?;
     if let Some(target) = std::env::var_os("FILEX_CWD_FILE") {
         let mut output = directory.as_os_str().as_bytes().to_vec();
         output.push(0);

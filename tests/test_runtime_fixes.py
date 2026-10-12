@@ -96,3 +96,42 @@ class RuntimeFixTests(unittest.TestCase):
                 terminal.until(lambda: (root/'folder_after_focus').is_dir())
                 terminal.send('Q');self.assertEqual(terminal.process.wait(timeout=5),0)
             finally: terminal.close()
+
+    def test_inline_link_target_selection_exit_and_navigation(self):
+        for mode in ('relative', 'absolute', 'chain', 'folder', 'left', 'up', 'focus', 'broken', 'cycle'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix='filex-target-') as d:
+                root=Path(d); source=root/'source'; source.mkdir()
+                folder=root/"target ' 中文"; folder.mkdir(); target=folder/'b.txt'; target.write_text('target head')
+                config=root/'settings.conf'; config.write_text('[input_method]\nauto_english=false\n')
+                callback=root/'cwd'; link=source/'a.js'
+                if mode=='chain':
+                    (root/'bridge').symlink_to(target); link.symlink_to('../bridge')
+                elif mode=='absolute': link.symlink_to(target)
+                elif mode=='folder': link.symlink_to(folder, target_is_directory=True)
+                elif mode=='broken': link.symlink_to('../missing')
+                elif mode=='cycle': link.symlink_to('a.js')
+                else: link.symlink_to(Path('..')/folder.name/target.name)
+                terminal=Terminal([str(ROOT/'filex.sh'),str(source),'--config',str(config)],source,{'FILEX_CWD_FILE':str(callback)})
+                try:
+                    terminal.until(lambda: '↑↓'.encode() in terminal.output)
+                    terminal.send('\x1b[C\x1b[C')
+                    if mode in ('broken','cycle'):
+                        terminal.until(lambda: '链接目标不可访问'.encode() in terminal.output)
+                        terminal.send('x'); expected=source
+                    else:
+                        terminal.until(lambda: '链接目标:'.encode() in terminal.output)
+                        name=Path(os.readlink(link)).name
+                        self.assertIn(b'\x1b[7m\x1b[1m'+name.encode(),terminal.output)
+                        # Dashboard follows the selected destination, not a.js.
+                        terminal.send('q'); terminal.until(lambda: str(target if mode!='folder' else folder).encode() in terminal.output)
+                        if mode!='folder': terminal.until(lambda: b'target head' in terminal.output)
+                        if mode=='left': terminal.send('\x1b[D')
+                        if mode=='up': terminal.send('\x1b[A')
+                        if mode=='focus':
+                            terminal.send('f')
+                            self.assertFalse(callback.exists())
+                            terminal.until(lambda: '根目录:'.encode() in terminal.output)
+                        terminal.send('x'); expected=source if mode in ('left','up') else folder
+                    self.assertEqual(terminal.process.wait(timeout=5),0)
+                    self.assertEqual(callback.read_bytes(),os.fsencode(expected)+b'\0')
+                finally: terminal.close()

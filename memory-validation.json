@@ -1,6 +1,6 @@
 {
   "version": "1.5.0",
-  "binary_sha256": "ab3cc6e03f66efd22b3e2d9564b8a87dcf79d8e5b1b53ab14aa8be2e8e01716f",
+  "binary_sha256": "8b5388e92cf38d0d67a32423eaac03861ba4f335f1c6e9514a4418ea22dfe9cb",
   "date": "2026-10-12",
   "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications",
   "settings": {
@@ -10,10 +10,10 @@
   },
   "scenarios": {
     "symlinks_7200": {
-      "max_observed_rss_kib": 6904,
-      "peak_rss_kib": 6904,
-      "peak_rss_mb": 7.07,
-      "peak_rss_mib": 6.742,
+      "max_observed_rss_kib": 6856,
+      "peak_rss_kib": 6856,
+      "peak_rss_mb": 7.021,
+      "peak_rss_mib": 6.695,
       "under_15_mb": true,
       "actions": [
         "E",
@@ -27,10 +27,10 @@
       ]
     },
     "hard_links_2400": {
-      "max_observed_rss_kib": 3856,
-      "peak_rss_kib": 3856,
-      "peak_rss_mb": 3.949,
-      "peak_rss_mib": 3.766,
+      "max_observed_rss_kib": 3844,
+      "peak_rss_kib": 3844,
+      "peak_rss_mb": 3.936,
+      "peak_rss_mib": 3.754,
       "under_15_mb": true,
       "actions": [
         "\u001b[C",
@@ -42,10 +42,10 @@
       ]
     },
     "project_root": {
-      "max_observed_rss_kib": 4588,
-      "peak_rss_kib": 4632,
-      "peak_rss_mb": 4.743,
-      "peak_rss_mib": 4.523,
+      "max_observed_rss_kib": 4380,
+      "peak_rss_kib": 4424,
+      "peak_rss_mb": 4.53,
+      "peak_rss_mib": 4.32,
       "under_15_mb": true,
       "actions": [
         "q",
@@ -57,10 +57,10 @@
       ]
     },
     "flat_20000_files": {
-      "max_observed_rss_kib": 4024,
-      "peak_rss_kib": 4024,
-      "peak_rss_mb": 4.121,
-      "peak_rss_mib": 3.93,
+      "max_observed_rss_kib": 3900,
+      "peak_rss_kib": 3900,
+      "peak_rss_mb": 3.994,
+      "peak_rss_mib": 3.809,
       "under_15_mb": true,
       "actions": [
         "q",
@@ -74,10 +74,10 @@
       ]
     },
     "branches_7200_files": {
-      "max_observed_rss_kib": 6784,
-      "peak_rss_kib": 6784,
-      "peak_rss_mb": 6.947,
-      "peak_rss_mib": 6.625,
+      "max_observed_rss_kib": 6736,
+      "peak_rss_kib": 6736,
+      "peak_rss_mb": 6.898,
+      "peak_rss_mib": 6.578,
       "under_15_mb": true,
       "actions": [
         "E",

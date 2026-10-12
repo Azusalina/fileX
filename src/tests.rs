@@ -571,3 +571,37 @@ fn selected_route_highlights_ancestor_edges_without_sibling_branches() {
             .is_empty()
     );
 }
+
+#[test]
+fn explicit_link_target_resolves_relative_absolute_chained_and_broken_paths() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new();
+    let target = f.0.join("right/deep/needle 中文.PY");
+    let link = f.0.join("left/a");
+    symlink("../right/deep/needle 中文.PY", &link).unwrap();
+    assert_eq!(files::link_target(&link).unwrap(), target);
+    assert_eq!(
+        files::exit_directory_path(&target).unwrap(),
+        target.parent().unwrap()
+    );
+    let chain = f.0.join("left/chain");
+    symlink("a", &chain).unwrap();
+    assert_eq!(files::link_target(&chain).unwrap(), target);
+    let absolute = f.0.join("absolute");
+    symlink(&target, &absolute).unwrap();
+    assert_eq!(files::link_target(&absolute).unwrap(), target);
+    let folder = f.0.join("folder");
+    symlink(f.0.join("right"), &folder).unwrap();
+    let resolved = files::link_target(&folder).unwrap();
+    assert_eq!(
+        files::exit_directory_path(&resolved).unwrap(),
+        f.0.join("right")
+    );
+    let broken = f.0.join("broken");
+    symlink("missing", &broken).unwrap();
+    assert!(files::link_target(&broken).is_err());
+    let cycle = f.0.join("cycle");
+    symlink("cycle", &cycle).unwrap();
+    assert!(files::link_target(&cycle).is_err());
+    assert!(files::link_target(&target).is_err());
+}

@@ -190,8 +190,14 @@ struct Ui {
     query: String,
     message: String,
     exit_directory: Option<PathBuf>,
+    link_target: Option<PathBuf>,
 }
 impl Ui {
+    fn selection_path(&self) -> PathBuf {
+        self.link_target
+            .clone()
+            .unwrap_or_else(|| self.browser.selected.borrow().path.clone())
+    }
     fn draw(&mut self) -> Result<(), String> {
         let (w, h) = terminal::size().map_err(ioerr)?;
         let (w, h) = (w as usize, h as usize);
@@ -309,22 +315,42 @@ impl Ui {
                     &item.label,
                     tree,
                     Some(color),
-                    Rc::ptr_eq(&item.node, &self.browser.selected),
+                    Rc::ptr_eq(&item.node, &self.browser.selected) && self.link_target.is_none(),
                     false,
                     dim,
                 )?;
                 if let Some(start) = item.link_start {
+                    let target_selected = Rc::ptr_eq(&item.node, &self.browser.selected)
+                        && self.link_target.is_some();
+                    let tail = &item.label[start..];
+                    // Keep the connector's bold color; reverse only the target name.
+                    let connector_end = if target_selected { 6 } else { tail.len() };
                     put_styled(
                         &mut out,
                         item.y - self.top + 3,
                         (item.x + item.label[..start].width()) as isize - self.left as isize + 1,
-                        &item.label[start..],
+                        &tail[..connector_end],
                         tree,
                         Some(&self.browser.conf.link_color),
                         false,
                         true,
                         dim,
                     )?;
+                    if target_selected {
+                        put_styled(
+                            &mut out,
+                            item.y - self.top + 3,
+                            (item.x + item.label[..start].width() + 6) as isize
+                                - self.left as isize
+                                + 1,
+                            &tail[6..],
+                            tree,
+                            Some(&self.browser.conf.link_color),
+                            true,
+                            true,
+                            false,
+                        )?;
+                    }
                 }
             }
         }
@@ -340,7 +366,7 @@ impl Ui {
                     false,
                 )?
             }
-            let path = self.browser.selected.borrow().path.clone();
+            let path = self.selection_path();
             if self.meta_path.as_ref() != Some(&path) {
                 self.meta =
                     files::dashboard(&path, &self.browser.root.borrow().path, &self.browser.conf);
@@ -364,7 +390,12 @@ impl Ui {
             }
         }
         let selected = self.browser.selected.borrow();
-        let detail = if !selected.error.is_empty() {
+        let detail = if let Some(target) = &self.link_target {
+            format!(
+                "链接目标: {} · ← 返回链接 · x 进入目标目录",
+                target.display()
+            )
+        } else if !selected.error.is_empty() {
             selected.error.clone()
         } else if selected.omitted > 0 {
             format!(
@@ -534,7 +565,7 @@ impl Ui {
         }
     }
     fn open(&mut self, method: &str) -> Result<(), String> {
-        let path = self.browser.selected.borrow().path.clone();
+        let path = self.selection_path();
         let (mut command, terminal) = files::open_command(&path, &self.browser.conf, method)?;
         if terminal
             && self.browser.conf.tmux_right
@@ -608,8 +639,12 @@ impl Ui {
     }
     fn choose_open(&mut self) -> Result<(), String> {
         let node = self.browser.selected.clone();
-        let path = node.borrow().path.clone();
-        let dir = node.borrow().dir;
+        let path = self.selection_path();
+        let dir = if self.link_target.is_some() {
+            path.is_dir()
+        } else {
+            node.borrow().dir
+        };
         let default = self
             .browser
             .conf
@@ -644,7 +679,7 @@ impl Ui {
                 )
             })
             .collect();
-        if dir {
+        if dir && self.link_target.is_none() {
             options.insert(0, (None, "fileX 展开 / 收起目录".into()));
         }
         if let Some(index) = self.choose(&format!("打开方式: {}", path.display()), &options)? {
@@ -697,6 +732,9 @@ impl Ui {
         }
     }
     fn operation(&mut self, action: &str) -> Result<(), String> {
+        if self.link_target.is_some() {
+            return Err("请按 ← 选回链接，或按 f 进入目标目录后操作文件".into());
+        }
         let source = self.browser.selected.borrow().path.clone();
         if Rc::ptr_eq(&self.browser.selected, &self.browser.root)
             && ["rename", "move", "trash"].contains(&action)
@@ -788,11 +826,27 @@ impl Ui {
                 _ => self.browser.conf.action(key).unwrap_or(""),
             })
             .to_string();
+        if matches!(
+            action.as_str(),
+            "up" | "down"
+                | "collapse"
+                | "expand_all"
+                | "collapse_all"
+                | "hidden"
+                | "refresh"
+                | "config"
+                | "goto"
+                | "search"
+                | "next_match"
+                | "previous_match"
+        ) || matches!(key, "home" | "end" | "pageup" | "pagedown" | "escape")
+        {
+            self.link_target = None;
+        }
         match action.as_str() {
             "quit" => return Ok(true),
             "exit_here" => {
-                self.exit_directory =
-                    Some(files::exit_directory(&self.browser.selected.borrow().path)?);
+                self.exit_directory = Some(files::exit_directory(&self.selection_path())?);
                 return Ok(true);
             }
             "dashboard" => {
@@ -821,7 +875,17 @@ impl Ui {
             }
             "up" => self.browser.step(-1),
             "down" => self.browser.step(1),
-            "expand" => self.browser.right(),
+            "expand" => {
+                if self.link_target.is_none() {
+                    if self.browser.selected.borrow().link {
+                        let target = files::link_target(&self.browser.selected.borrow().path)?;
+                        self.link_target = Some(target);
+                        self.meta_path = None;
+                    } else {
+                        self.browser.right();
+                    }
+                }
+            }
             "collapse" => self.browser.left(),
             "expand_all" => {
                 self.message = "正在展开…".into();
@@ -830,12 +894,21 @@ impl Ui {
             }
             "collapse_all" => self.message = self.browser.collapse_all()?,
             "parent" => {
-                self.message = self.browser.back()?;
-                self.left = 0;
-                self.top = 0
+                if self.link_target.take().is_none() {
+                    self.message = self.browser.back()?;
+                    self.left = 0;
+                    self.top = 0;
+                }
             }
             "focus_root" => {
-                self.message = self.browser.focus_root();
+                if let Some(target) = &self.link_target {
+                    let folder = files::exit_directory_path(target)?;
+                    self.browser.set_root(&folder.to_string_lossy())?;
+                    self.link_target = None;
+                    self.message = format!("根目录: {}", folder.display());
+                } else {
+                    self.message = self.browser.focus_root();
+                }
                 self.query.clear();
                 self.meta_path = None;
                 self.left = 0;
@@ -846,7 +919,7 @@ impl Ui {
                 self.browser.refresh()
             }
             "copy_path" => {
-                files::copy_path(&self.browser.selected.borrow().path)?;
+                files::copy_path(&self.selection_path())?;
                 self.message = "已复制绝对路径".into();
             }
             "refresh" => {
@@ -897,24 +970,28 @@ impl Ui {
             }
             "open_with" => self.choose_open()?,
             "open" => {
-                let n = self.browser.selected.borrow();
+                let path = self.selection_path();
+                let dir = if self.link_target.is_some() {
+                    path.is_dir()
+                } else {
+                    self.browser.selected.borrow().dir
+                };
                 let method = self
                     .browser
                     .conf
-                    .rule(&n.path, &self.browser.conf.defaults, n.dir)
+                    .rule(&path, &self.browser.conf.defaults, dir)
                     .cloned()
                     .unwrap_or("system".into());
-                drop(n);
                 self.open(&method)?
             }
             "link_info" => {
-                let path = self.browser.selected.borrow().path.clone();
+                let path = self.selection_path();
                 let text =
                     files::dashboard(&path, &self.browser.root.borrow().path, &self.browser.conf);
                 self.pager("文件 / 链接信息", &text)?;
             }
             "preview" => {
-                let path = self.browser.selected.borrow().path.clone();
+                let path = self.selection_path();
                 let text = files::preview(&path, self.browser.conf.preview_bytes);
                 self.pager(&path.to_string_lossy(), &text)?
             }
@@ -979,6 +1056,7 @@ pub fn run(browser: Browser, path: PathBuf) -> Result<Option<PathBuf>, String> {
         query: String::new(),
         message: String::new(),
         exit_directory: None,
+        link_target: None,
     };
     loop {
         ui.draw()?;
