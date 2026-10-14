@@ -15,10 +15,13 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 
-def measure(root, actions):
+def measure(root, actions, tty=False):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 140, 0, 0))
-    process = subprocess.Popen([str(ROOT / "filex.sh"), str(root), "--config", str(ROOT / "fileX.example.conf")], stdin=slave, stdout=slave, stderr=slave, env={**{k: v for k, v in os.environ.items() if not k.startswith("KONSOLE_DBUS_") and k not in ("TMUX", "TMUX_PANE", "NO_COLOR")}, "TERM": "xterm-256color"})
+    excluded = {"TMUX", "TMUX_PANE", "NO_COLOR", "SSH_CONNECTION", "SSH_TTY"}
+    if tty: excluded.update({"DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "COLORTERM"})
+    env = {**{k:v for k,v in os.environ.items() if not k.startswith("KONSOLE_DBUS_") and k not in excluded}, "TERM": "linux" if tty else "xterm-256color"}
+    process = subprocess.Popen([str(ROOT / "filex.sh"), str(root), "--config", str(ROOT / "fileX.example.conf")], stdin=slave, stdout=slave, stderr=slave, env=env)
     os.close(slave)
     observed_rss = peak = 0
     output = bytearray()
@@ -91,6 +94,8 @@ with tempfile.TemporaryDirectory(prefix="filex-memory-") as directory:
     for i in range(2400):
         os.link(anchor, linked / f"hard{i:04d}.mjs")
     report = {"version": "1.5.0", "binary_sha256": hashlib.sha256((ROOT / "target/release/filex").read_bytes()).hexdigest(), "date": time.strftime("%Y-%m-%d"), "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications", "settings": {"max_entries": 1000, "max_loaded_nodes_per_pane": 6000, "max_expand_nodes": 5000}, "scenarios": {
+        "tty_branches_7200_files": measure(branches, ["E", "q", "\x06needle_B059_I119\r", "k", "j", "y", "\x12"], tty=True),
+        "tty_dual_branches_7200_files": measure(branches, ["v", "E", "\t", "E", "q", "\x06needle_B059_I119\r", "\t", "y", "v", "\x12"], tty=True),
         "dual_branches_7200_files": measure(branches, ["v", "E", "\t", "E", "q", "\x06needle_B059_I119\r", "k", "j", "\t", "\x06needle_B059_I119\r", "q", "\t", "v", "\x12"]),
         "symlinks_7200": measure(soft, ["E", "q", "\x06soft_B059_I119\r", "k", "j", "I", "\x1b", "\x12"]),
         "hard_links_2400": measure(linked, ["\x1b[C", "q", "I", "\x1b", "\x06hard2399\r", "\x12"]),

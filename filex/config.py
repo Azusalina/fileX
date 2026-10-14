@@ -77,6 +77,10 @@ class Config:
     auto_english: bool = True
     konsole_shortcuts: bool = True
     tmux_extended_keys: bool = True
+    mode: str = "auto"
+    color_mode: str = "auto"
+    charset: str = "auto"
+    cli_opener: str = "auto"
     scan_limit: int = 10000
     max_results: int = 32
     preview_bytes: int = 65536
@@ -139,7 +143,7 @@ def load_config(path=None):
         "tmux": {"open_in_right_pane"},
         "input_method": {"auto_english"},
         "links": {"scan_limit", "max_results"},
-        "terminal": {"konsole_shortcuts", "tmux_extended_keys"},
+        "terminal": {"konsole_shortcuts", "tmux_extended_keys", "mode", "color_mode", "charset", "cli_opener"},
         "preview": {"preview_bytes", "preview_lines"}, "dashboard": {"dashboard_width"},
         "search": {"search_max_results", "search_scan_limit"},
         "colors": {"background", "foreground", "folder_color", "file_color", "selected_color", "line_color", "link_color", "path_color"},
@@ -163,6 +167,9 @@ def load_config(path=None):
                 if not re.fullmatch(color_pattern, value):
                     raise ValueError(f"{key}: 应为 #RRGGBB")
             setattr(conf, key, value)
+    for key, choices in {"mode": {"auto", "tty"}, "color_mode": {"auto", "16", "256", "truecolor", "none"}, "charset": {"auto", "ascii", "unicode"}}.items():
+        if getattr(conf, key) not in choices:
+            raise ValueError(f"{key}: invalid terminal option")
     if conf.sort not in {"name", "size", "modified"}:
         raise ValueError("sort 应为 name、size 或 modified")
     for key, low, high in [("column_gap", 3, 20), ("max_label_width", 12, 120),
@@ -254,4 +261,6 @@ def load_config(path=None):
                 if not re.fullmatch(color_pattern, value):
                     raise ValueError(f"extension_colors.{extension}: 应为 #RRGGBB")
             getattr(conf, section)[extension.lower()] = value
+    if conf.cli_opener != "auto" and not conf.openers.get(conf.cli_opener, {}).get("terminal", False):
+        raise ValueError("terminal.cli_opener 必须为 auto 或 terminal=true 的 opener")
     return conf

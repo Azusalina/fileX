@@ -125,7 +125,7 @@ class Terminal:
         detail = node.error or (f"还有 {node.omitted} 项未显示；调高 max_entries 后刷新" if node.omitted else str(node.path))
         self.put(height - 2, 1, self.message or detail)
         keys = self.browser.config.keys
-        self.put(height - 1, 1, f"{navigation_hint()}  {keys['collapse']} 收起  {keys['focus_root']} 设根  Enter 打开  {keys['dashboard']} 信息  Ctrl+F 搜索  Delete 回收站  {keys['quit']} 退出", curses.A_DIM)
+        self.put(height - 1, 1, f"{navigation_hint()}  {keys['collapse']} 收起  {keys['focus_root']} 设根  Enter 展开/文件打开  {keys['open_with']} 菜单  {keys['dashboard']} 信息  Ctrl+F 搜索  Delete 回收站  {keys['quit']} 退出", curses.A_DIM)
         self.screen.refresh()
 
     def prompt(self, label, initial=""):
@@ -347,6 +347,9 @@ class Terminal:
                     self.message = self.browser.collapse_all()
                 elif action == "open":
                     self.open_method(default_opener(self.browser.selected, self.browser.config))
+                elif key in ("\n", "\r", curses.KEY_ENTER) and self.browser.selected.is_dir:
+                    if not self.browser.selected.expanded:
+                        self.browser.expand(self.browser.selected)
                 elif action == "open_with" or key in ("\n", "\r", curses.KEY_ENTER):
                     self.choose_open()
                 elif action == "link_info":
@@ -399,8 +402,8 @@ class Terminal:
                     self.metadata_path = None
                     self.message = f"配置已重新读取: {path}"
                 elif action == "help":
-                    entries = {"quit": "退出", "exit_here": "退出并将 terminal 切到选中目录", "dashboard": "右侧创建 / 修改时间 / 大小 / 链接", "link_info": "完整文件 / 链接信息", "expand": "展开 / 进入子节点", "collapse": "只收起选中目录", "expand_all": "展开选中目录全部分支", "collapse_all": "收起选中目录全部分支", "down": "下一个同级节点", "up": "上一个同级节点", "open": "按扩展名默认程序打开", "open_with": "选择打开程序（也可 Enter）", "preview": "文本预览", "hidden": "隐藏文件开关", "refresh": "刷新", "search": "递归搜索文件 / 目录名", "next_match": "下一个匹配", "previous_match": "上一个匹配", "goto": "更换根目录", "parent": "返回父级 / 引入上级根目录", "focus_root": "当前目录设为根并刷新", "new_file": "新建文件", "new_folder": "新建目录", "rename": "重命名", "copy": "复制", "copy_path": "复制绝对路径", "move": "移动", "trash": "送入回收站（确认）", "help": "帮助", "config": "重新读取配置"}
-                    self.pager("fileX 快捷键", "\n".join(f"{self.browser.config.keys[a]}    {label}" for a, label in entries.items()) + "\n\nCtrl+N / Ctrl+Shift+N    新建文件 / 目录\nCtrl+F / /    搜索\nEnter    选择打开程序\nH / L    横向平移\nPgUp / PgDn    翻页\nHome / End    首末节点\nEsc    取消输入 / 清除搜索\nCtrl+U    清空输入\n\n复制 / 移动填写完整目标路径，不会覆盖已有目标。\n扩展名配色用于 TUI，终端会近似为可用颜色。")
+                    entries = {"quit": "退出", "exit_here": "退出并将 terminal 切到选中目录", "dashboard": "右侧创建 / 修改时间 / 大小 / 链接", "link_info": "完整文件 / 链接信息", "expand": "展开 / 进入子节点", "collapse": "只收起选中目录", "expand_all": "展开选中目录全部分支", "collapse_all": "收起选中目录全部分支", "down": "下一个同级节点", "up": "上一个同级节点", "open": "按扩展名默认程序打开", "open_with": "选择打开程序（文件也可 Enter）", "preview": "文本预览", "hidden": "隐藏文件开关", "refresh": "刷新", "search": "递归搜索文件 / 目录名", "next_match": "下一个匹配", "previous_match": "上一个匹配", "goto": "更换根目录", "parent": "返回父级 / 引入上级根目录", "focus_root": "当前目录设为根并刷新", "new_file": "新建文件", "new_folder": "新建目录", "rename": "重命名", "copy": "复制", "copy_path": "复制绝对路径", "move": "移动", "trash": "送入回收站（确认）", "help": "帮助", "config": "重新读取配置"}
+                    self.pager("fileX 快捷键", "\n".join(f"{self.browser.config.keys[a]}    {label}" for a, label in entries.items()) + "\n\nCtrl+N / Ctrl+Shift+N    新建文件 / 目录\nCtrl+F / /    搜索\nEnter    展开目录（光标保留）/ 文件选择打开程序\nw    打开方式菜单\nH / L    横向平移\nPgUp / PgDn    翻页\nHome / End    首末节点\nEsc    取消输入 / 清除搜索\nCtrl+U    清空输入\n\n复制 / 移动填写完整目标路径，不会覆盖已有目标。\n扩展名配色用于 TUI，终端会近似为可用颜色。")
             except (OSError, ValueError, RuntimeError) as exc:
                 self.message = f"操作失败: {safe_text(exc)}"
             except Exception as exc:

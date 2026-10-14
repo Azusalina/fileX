@@ -1,4 +1,7 @@
-use crate::config::{Config, expand_home};
+use crate::{
+    config::{Config, expand_home},
+    terminal_profile::label,
+};
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -37,17 +40,27 @@ impl Node {
     }
     pub fn label(&self, width: usize) -> (String, Option<usize>) {
         let prefix = if self.dir {
-            if self.expanded { "▾ " } else { "▸ " }
+            if crate::terminal_profile::get().ascii {
+                if self.expanded { "v " } else { "> " }
+            } else if self.expanded {
+                "▾ "
+            } else {
+                "▸ "
+            }
         } else {
-            "· "
+            crate::terminal_profile::label("· ", ". ")
         };
         let mut suffix = if self.link {
-            " ↗".to_owned()
+            crate::terminal_profile::label(" ↗", " @").to_owned()
         } else {
             String::new()
         };
         if !self.dir && self.links > 1 {
-            suffix.push_str(&format!(" H×{}", self.links));
+            suffix.push_str(&format!(
+                " H{}{}",
+                crate::terminal_profile::label("×", "x"),
+                self.links
+            ));
         }
         let name = clean(
             &self
@@ -88,7 +101,17 @@ impl Node {
 pub fn clean(value: &str) -> String {
     value
         .chars()
-        .map(|c| if c.is_control() { '�' } else { c })
+        .map(|c| {
+            if c.is_control() {
+                if crate::terminal_profile::get().ascii {
+                    '?'
+                } else {
+                    '�'
+                }
+            } else {
+                c
+            }
+        })
         .collect()
 }
 pub fn clip(text: &str, width: usize) -> String {
@@ -108,7 +131,11 @@ pub fn clip(text: &str, width: usize) -> String {
         result.push(c);
         used += w;
     }
-    result.push('…');
+    result.push(if crate::terminal_profile::get().ascii {
+        '.'
+    } else {
+        '…'
+    });
     result
 }
 #[derive(Eq, PartialEq)]
@@ -141,7 +168,7 @@ impl Browser {
     pub fn new(path: &Path, conf: Config) -> Result<Self, String> {
         let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
         if !path.is_dir() {
-            return Err("不是目录".into());
+            return Err(label("不是目录", "Not a directory").into());
         }
         let root = Node::new(path, Weak::new(), true, false);
         let mut browser = Self {
@@ -384,7 +411,11 @@ impl Browser {
         self.search_key = None;
         self.search_summary.clear();
         self.refresh();
-        format!("当前目录设为根: {}", self.root.borrow().path.display())
+        ui_format!(
+            "当前目录设为根: {}",
+            "Current folder set as root: {}",
+            self.root.borrow().path.display()
+        )
     }
     pub fn ascend(&mut self) -> Result<String, String> {
         let old = self.root.clone();
@@ -393,7 +424,7 @@ impl Browser {
             .path
             .parent()
             .map(Path::to_path_buf)
-            .ok_or("已在文件系统根目录")?;
+            .ok_or(label("已在文件系统根目录", "Already at filesystem root"))?;
         let selected = self.selected.clone();
         let new = Node::new(path.clone(), Weak::new(), true, false);
         // Parent listing is bounded; the old subtree is spliced back intact.
@@ -419,11 +450,15 @@ impl Browser {
         self.root = new;
         self.selected = selected;
         self.search_key = None;
-        Ok(format!("引入上级目录: {}", path.display()))
+        Ok(ui_format!(
+            "引入上级目录: {}",
+            "Parent introduced: {}",
+            path.display()
+        ))
     }
     pub fn expand_all(&mut self) -> Result<String, String> {
         if !self.selected.borrow().dir || self.selected.borrow().link {
-            return Err("请选择普通目录".into());
+            return Err(label("请选择普通目录", "Select a regular directory").into());
         }
         let mut stack = vec![self.selected.clone()];
         let mut count = 0;
@@ -440,10 +475,14 @@ impl Browser {
                 stack.extend(node.borrow().children.iter().rev().cloned());
             }
         }
-        Ok(format!(
+        Ok(ui_format!(
             "已访问 {count} 个节点{}",
+            "Visited {count} nodes{}",
             if limited {
-                "；达到显示 / 缓存 / 展开上限"
+                label(
+                    "；达到显示 / 缓存 / 展开上限",
+                    "; display / cache / expansion limit reached",
+                )
             } else {
                 ""
             }
@@ -451,7 +490,7 @@ impl Browser {
     }
     pub fn collapse_all(&mut self) -> Result<String, String> {
         if !self.selected.borrow().dir {
-            return Err("请选择目录".into());
+            return Err(label("请选择目录", "Select a directory").into());
         }
         let mut stack = vec![self.selected.clone()];
         while let Some(node) = stack.pop() {
@@ -459,7 +498,11 @@ impl Browser {
             n.expanded = false;
             stack.extend(n.children.iter().cloned());
         }
-        Ok("已收起选中目录的全部分支".into())
+        Ok(label(
+            "已收起选中目录的全部分支",
+            "All selected folder branches collapsed",
+        )
+        .into())
     }
     pub fn search(&mut self, query: &str) {
         let root = self.root.borrow().path.clone();
@@ -514,16 +557,20 @@ impl Browser {
         results.sort_by_key(|p| (p.components().count(), p.to_string_lossy().to_lowercase()));
         self.results = results;
         self.search_key = Some((query.into(), root, self.conf.hidden));
-        self.search_summary = format!(
+        self.search_summary = ui_format!(
             "{} 个结果 · 检查 {scanned} 项{}{}",
+            "{} results - scanned {scanned} entries{}{}",
             self.results.len(),
             if limited {
-                " · 已达搜索上限"
+                label(" · 已达搜索上限", " - search limit reached")
             } else {
                 ""
             },
             if skipped > 0 {
-                format!(" · 跳过 {skipped} 个不可读 / 过深目录")
+                ui_format!(
+                    " · 跳过 {skipped} 个不可读 / 过深目录",
+                    " - skipped {skipped} unreadable / overly deep folders"
+                )
             } else {
                 String::new()
             }
@@ -542,7 +589,10 @@ impl Browser {
                 .iter()
                 .find(|n| n.borrow().path == target)
                 .cloned()
-                .ok_or("无法定位，文件已变更或达到缓存上限")?;
+                .ok_or(label(
+                    "无法定位，文件已变更或达到缓存上限",
+                    "Cannot locate: file changed or cache limit reached",
+                ))?;
             node = next;
         }
         self.selected = node;
@@ -559,7 +609,11 @@ impl Browser {
             self.search(query)
         }
         if self.results.is_empty() {
-            return Ok(format!("没有匹配；{}", self.search_summary));
+            return Ok(ui_format!(
+                "没有匹配；{}",
+                "No matches; {}",
+                self.search_summary
+            ));
         }
         let selected = self.selected.borrow().path.clone();
         let index = if !fresh {
@@ -574,8 +628,9 @@ impl Browser {
         };
         let path = self.results[index].clone();
         self.reveal(&path)?;
-        Ok(format!(
+        Ok(ui_format!(
             "{}/{} · {}",
+            "{}/{} - {}",
             index + 1,
             self.results.len(),
             self.search_summary
@@ -775,7 +830,7 @@ impl Layout {
             .map(|(pos, m)| {
                 (
                     pos,
-                    match m {
+                    crate::terminal_profile::glyph(match m {
                         1 | 4 | 5 => '│',
                         3 => '└',
                         6 => '┌',
@@ -787,7 +842,7 @@ impl Layout {
                         14 => '┬',
                         15 => '┼',
                         _ => '─',
-                    },
+                    }),
                 )
             })
             .collect()

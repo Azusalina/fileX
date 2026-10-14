@@ -1,9 +1,16 @@
+macro_rules! ui_format {
+    ($zh:literal, $en:literal $(, $arg:expr)* $(,)?) => {
+        if crate::terminal_profile::get().ascii { format!($en $(, $arg)*) }
+        else { format!($zh $(, $arg)*) }
+    };
+}
 mod config;
 mod files;
 mod input;
 mod links;
 mod model;
 mod terminal_host;
+mod terminal_profile;
 mod tmux;
 mod tui;
 use std::{
@@ -24,6 +31,7 @@ fn run() -> Result<(), String> {
     let mut path = PathBuf::from(".");
     let mut conf_path = config::config_path();
     let (mut explicit, mut init, mut print) = (false, false, false);
+    let (mut tty, mut ascii) = (false, false);
     let mut args = env::args().skip(1);
     let mut positional = false;
     while let Some(arg) = args.next() {
@@ -34,7 +42,7 @@ fn run() -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "filex\nfilex [目录] [--config PATH] [--print-tree] [--init-config]\n默认当前工作目录；q 信息 / Q 退出 / Ctrl+F 搜索 / Enter 打开方式 / r 重命名 / Ctrl+Alt+C 复制路径"
+                    "filex\nfilex [DIRECTORY] [--config PATH] [--tty] [--ascii] [--print-tree] [--init-config]\nCurrent directory by default. Linux TTY / SSH: terminal openers, a/A create, y copy path, Ctrl+V paste path.\nq dashboard / Q quit / Ctrl+F search / Enter folder expand / file open with / w menu / r rename / v dual panes.\nPipes and TERM=dumb automatically print a tree. --tty forces console compatibility."
                 );
                 return Ok(());
             }
@@ -44,6 +52,8 @@ fn run() -> Result<(), String> {
             }
             "--init-config" => init = true,
             "--print-tree" => print = true,
+            "--tty" => tty = true,
+            "--ascii" => ascii = true,
             "--" => {
                 path = PathBuf::from(args.next().ok_or("缺少目录")?);
                 if args.next().is_some() {
@@ -81,13 +91,22 @@ fn run() -> Result<(), String> {
         return Err(format!("配置不存在: {}", conf_path.display()));
     }
     let conf = config::Config::load(&conf_path)?;
+    terminal_profile::init(&conf, tty, ascii);
     let browser = model::Browser::new(&path, conf)?;
-    if print {
-        print!("{}", model::Layout::new(&browser).plain());
+    if print
+        || !io::stdin().is_terminal()
+        || !io::stdout().is_terminal()
+        || env::var("TERM").is_ok_and(|t| t == "dumb")
+    {
+        let result = io::stdout()
+            .lock()
+            .write_all(model::Layout::new(&browser).plain().as_bytes());
+        if let Err(error) = result
+            && error.kind() != io::ErrorKind::BrokenPipe
+        {
+            return Err(error.to_string());
+        }
         return Ok(());
-    }
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return Err("TUI 需要交互终端；可用 --print-tree ".into());
     }
     if let Some(directory) = tui::run(browser, conf_path)?
         && env::var_os("FILEX_CWD_FILE").is_none()

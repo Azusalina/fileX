@@ -1,4 +1,4 @@
-use crate::{config::Config, model::clean};
+use crate::{config::Config, model::clean, terminal_profile::label};
 use std::{
     fs::{self, Metadata},
     os::unix::fs::MetadataExt,
@@ -91,8 +91,9 @@ pub fn peers(
 }
 
 pub fn details(path: &Path, root: &Path, info: &Metadata, conf: &Config) -> String {
-    let mut text = format!(
+    let mut text = ui_format!(
         "Links / 链接数: {}\nDevice / Inode: {} / {}\n",
+        "Links: {}\nDevice / Inode: {} / {}\n",
         info.nlink(),
         info.dev(),
         info.ino()
@@ -106,25 +107,33 @@ pub fn details(path: &Path, root: &Path, info: &Metadata, conf: &Config) -> Stri
                     path.parent().unwrap_or(Path::new(".")).join(&target)
                 };
                 let state = match path.try_exists() {
-                    Ok(true) => "有效".to_owned(),
-                    Ok(false) => "断开".to_owned(),
-                    Err(error) => format!("无法访问: {error}"),
+                    Ok(true) => label("有效", "valid").to_owned(),
+                    Ok(false) => label("断开", "broken").to_owned(),
+                    Err(error) => ui_format!("无法访问: {error}", "Inaccessible: {error}"),
                 };
-                text.push_str(&format!(
+                text.push_str(&ui_format!(
                     "Soft link / 软链接 → {}\nTarget / 目标路径: {}\n状态: {state}\n",
+                    "Symbolic link -> {}\nTarget path: {}\nState: {state}\n",
                     clean(&target.to_string_lossy()),
                     clean(&absolute.to_string_lossy())
                 ));
             }
-            Err(error) => text.push_str(&format!("软链接目标无法读取: {error}\n")),
+            Err(error) => text.push_str(&ui_format!(
+                "软链接目标无法读取: {error}\n",
+                "Cannot read link target: {error}\n"
+            )),
         }
     }
     if info.is_dir() {
-        text.push_str("目录链接数含 . / 子目录 ..，不表示文件硬链接\n");
+        text.push_str(label(
+            "目录链接数含 . / 子目录 ..，不表示文件硬链接\n",
+            "Directory count includes . / child .., not file hard links\n",
+        ));
     } else if info.nlink() > 1 {
         let found = peers(path, root, info, conf.link_scan_limit, conf.link_results);
-        text.push_str(&format!(
+        text.push_str(&ui_format!(
             "Hard links / 硬链接: {} 个名称共享此 inode\n其他路径（当前根目录内）: {}\n",
+            "Hard links: {} names share this inode\nOther paths (inside current root): {}\n",
             info.nlink(),
             found.paths.len()
         ));
@@ -132,14 +141,18 @@ pub fn details(path: &Path, root: &Path, info: &Metadata, conf: &Config) -> Stri
             text.push_str(&format!("{}\n", clean(&peer.to_string_lossy())));
         }
         if found.paths.is_empty() {
-            text.push_str("未找到其他路径；可能位于根目录外或不可读\n");
+            text.push_str(label(
+                "未找到其他路径；可能位于根目录外或不可读\n",
+                "No peer paths found; may be outside root or unreadable\n",
+            ));
         }
-        text.push_str(&format!(
+        text.push_str(&ui_format!(
             "扫描 {} 项，跳过 {} 处{}\n",
+            "Scanned {} entries, skipped {}{}\n",
             found.scanned,
             found.skipped,
             if found.limited {
-                "，达到扫描 / 结果上限"
+                label("，达到扫描 / 结果上限", "; scan / results limit reached")
             } else {
                 ""
             }

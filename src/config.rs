@@ -30,6 +30,10 @@ pub struct Config {
     pub auto_english: bool,
     pub konsole_shortcuts: bool,
     pub tmux_extended_keys: bool,
+    pub terminal_mode: String,
+    pub color_mode: String,
+    pub charset: String,
+    pub cli_opener: String,
     pub link_scan_limit: usize,
     pub link_results: usize,
     pub preview_bytes: usize,
@@ -204,6 +208,10 @@ impl Default for Config {
             auto_english: true,
             konsole_shortcuts: true,
             tmux_extended_keys: true,
+            terminal_mode: "auto".into(),
+            color_mode: "auto".into(),
+            charset: "auto".into(),
+            cli_opener: "auto".into(),
             link_scan_limit: 10000,
             link_results: 32,
             preview_bytes: 65536,
@@ -268,6 +276,14 @@ fn string(value: &Value, key: &str) -> Result<String, String> {
         .as_str()
         .map(str::to_string)
         .ok_or_else(|| format!("{key}: 应为字符串"))
+}
+fn choice(value: &Value, key: &str, choices: &[&str]) -> Result<String, String> {
+    let value = string(value, key)?;
+    if choices.contains(&value.as_str()) {
+        Ok(value)
+    } else {
+        Err(format!("{key}: {}", choices.join(" / ")))
+    }
 }
 fn number(value: &Value, key: &str, low: usize, high: usize) -> Result<usize, String> {
     value
@@ -380,6 +396,17 @@ impl Config {
                         conf.tmux_extended_keys =
                             value.as_bool().ok_or("tmux_extended_keys 应为布尔值")?
                     }
+                    ("terminal", "mode") => {
+                        conf.terminal_mode = choice(value, key, &["auto", "tty"])?
+                    }
+                    ("terminal", "color_mode") => {
+                        conf.color_mode =
+                            choice(value, key, &["auto", "16", "256", "truecolor", "none"])?
+                    }
+                    ("terminal", "charset") => {
+                        conf.charset = choice(value, key, &["auto", "ascii", "unicode"])?
+                    }
+                    ("terminal", "cli_opener") => conf.cli_opener = string(value, key)?,
                     ("terminal", "konsole_shortcuts") => {
                         conf.konsole_shortcuts =
                             value.as_bool().ok_or("konsole_shortcuts 应为布尔值")?
@@ -611,6 +638,14 @@ impl Config {
             if !conf.openers.contains_key(method) {
                 return Err(format!("打开程序未定义: {method}"));
             }
+        }
+        if conf.cli_opener != "auto"
+            && !conf
+                .openers
+                .get(&conf.cli_opener)
+                .is_some_and(|opener| opener.terminal)
+        {
+            return Err("terminal.cli_opener 必须为 auto 或 terminal=true 的 opener 名称".into());
         }
         Ok(conf)
     }

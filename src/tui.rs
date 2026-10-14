@@ -2,6 +2,7 @@ use crate::{
     config::{Config, key_code},
     files,
     model::{Browser, Layout, clean, clip},
+    terminal_profile::{self, Colors, label},
     tmux,
 };
 use crossterm::{
@@ -27,35 +28,65 @@ struct Guard;
 impl Guard {
     fn new() -> Result<Self, String> {
         terminal::enable_raw_mode().map_err(ioerr)?;
+        let guard = Self;
+        Self::enter()?;
+        Ok(guard)
+    }
+    fn enter() -> Result<(), String> {
+        if terminal_profile::get().console {
+            execute!(io::stdout(), Clear(ClearType::All), MoveTo(0, 0)).map_err(ioerr)?;
+        } else {
+            execute!(io::stdout(), EnterAlternateScreen).map_err(ioerr)?;
+        }
+        if terminal_profile::get().enhanced {
+            execute!(
+                io::stdout(),
+                EnableFocusChange,
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+                Print("\x1b[>4;2m")
+            )
+            .map_err(ioerr)?;
+        }
+        execute!(io::stdout(), Hide).map_err(ioerr)
+    }
+    fn leave() -> Result<(), String> {
         execute!(
             io::stdout(),
-            EnterAlternateScreen,
-            EnableFocusChange,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
-            Print("\x1b[>4;2m"),
-            Hide
+            SetAttribute(Attribute::Reset),
+            ResetColor,
+            Show
         )
         .map_err(ioerr)?;
-        Ok(Self)
+        if terminal_profile::get().enhanced {
+            execute!(
+                io::stdout(),
+                PopKeyboardEnhancementFlags,
+                DisableFocusChange,
+                Print("\x1b[>4;0m")
+            )
+            .map_err(ioerr)?;
+        }
+        if terminal_profile::get().console {
+            execute!(io::stdout(), Clear(ClearType::All), MoveTo(0, 0)).map_err(ioerr)
+        } else {
+            execute!(io::stdout(), LeaveAlternateScreen).map_err(ioerr)
+        }
     }
 }
 impl Drop for Guard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
-        let _ = execute!(
-            io::stdout(),
-            SetAttribute(Attribute::Reset),
-            ResetColor,
-            Show,
-            PopKeyboardEnhancementFlags,
-            DisableFocusChange,
-            Print("\x1b[>4;0m"),
-            LeaveAlternateScreen
-        );
+        let _ = Self::leave();
     }
 }
 fn read_key(auto_english: bool) -> Result<String, String> {
     loop {
+        if terminal_profile::stopping() {
+            return Ok("\x03".into());
+        }
+        if !event::poll(std::time::Duration::from_millis(200)).map_err(ioerr)? {
+            continue;
+        }
         match event::read().map_err(ioerr)? {
             Event::FocusLost => continue,
             Event::FocusGained => {
@@ -69,8 +100,11 @@ fn read_key(auto_english: bool) -> Result<String, String> {
                         libc::tcflow(libc::STDOUT_FILENO, libc::TCOON);
                     }
                 }
-                execute!(io::stdout(), Hide, Print("\x1b[=1u\x1b[>4;2m")).map_err(ioerr)?;
-                crate::input::ensure_english(auto_english);
+                execute!(io::stdout(), Hide).map_err(ioerr)?;
+                if terminal_profile::get().enhanced {
+                    execute!(io::stdout(), Print("\x1b[=1u\x1b[>4;2m")).map_err(ioerr)?;
+                }
+                crate::input::ensure_english(auto_english && terminal_profile::get().desktop);
                 return Ok("focus_gained".into());
             }
             Event::Resize(_, _) => return Ok("resize".into()),
@@ -166,7 +200,37 @@ fn put_styled(
         queue!(out, SetAttribute(Attribute::Dim)).map_err(ioerr)?;
     }
     if let Some(color) = color {
-        queue!(out, SetForegroundColor(rgb(color))).map_err(ioerr)?
+        let Color::Rgb { r, g, b } = rgb(color) else {
+            unreachable!()
+        };
+        match terminal_profile::get().colors {
+            Colors::None => {}
+            Colors::TrueColor => {
+                queue!(out, SetForegroundColor(Color::Rgb { r, g, b })).map_err(ioerr)?
+            }
+            Colors::Ansi256 => queue!(
+                out,
+                SetForegroundColor(Color::AnsiValue(terminal_profile::palette_index(
+                    r, g, b, 256
+                )))
+            )
+            .map_err(ioerr)?,
+            Colors::Ansi16 => {
+                let index = terminal_profile::palette_index(r, g, b, 16);
+                queue!(
+                    out,
+                    Print(format!(
+                        "\x1b[{}m",
+                        if index < 8 {
+                            30 + index
+                        } else {
+                            90 + index - 8
+                        }
+                    ))
+                )
+                .map_err(ioerr)?;
+            }
+        }
     } else {
         queue!(out, ResetColor).map_err(ioerr)?
     }
@@ -200,7 +264,8 @@ impl TreeArea {
     ) -> Result<(), String> {
         let text = clean(text);
         let text = if self.mirrored {
-            text.chars()
+            let mut text = text
+                .chars()
                 .map(|c| match c {
                     '┌' => '┐',
                     '┐' => '┌',
@@ -211,7 +276,11 @@ impl TreeArea {
                     '▸' => '◂',
                     _ => c,
                 })
-                .collect::<String>()
+                .collect::<String>();
+            if terminal_profile::get().ascii && text.starts_with("> ") {
+                text.replace_range(..1, "<");
+            }
+            text
         } else {
             text
         };
@@ -404,6 +473,7 @@ impl Pane {
     }
 }
 struct Ui {
+    clipboard: String,
     pane: Pane,
     other: Option<Pane>,
     right_active: bool,
@@ -426,13 +496,17 @@ impl Ui {
         if self.other.is_some() {
             self.other = None;
             self.right_active = false;
-            self.message = "单栏：保留当前目录".into();
+            self.message = label("单栏：保留当前目录", "Single pane: current folder kept").into();
         } else {
             let directory = files::exit_directory_path(&self.selection_path())?;
             let mut conf = self.pane.browser.conf.clone();
             conf.max_loaded = self.node_budget;
             self.other = Some(Pane::new(Browser::new(&directory, conf)?));
-            self.message = "双栏：Tab 切换 · c/m 到另一侧 · 右栏 ← 展开 / → 父级".into();
+            self.message = label(
+                "双栏：Tab 切换 · c/m 到另一侧 · 右栏 ← 展开 / → 父级",
+                "Dual panes: Tab switch, c/m transfer; right pane Left child / Right parent",
+            )
+            .into();
         }
         self.pane.focus = true;
         self.meta_path = None;
@@ -446,9 +520,9 @@ impl Ui {
             self.pane.focus = true;
             self.meta_path = None;
             self.message = if self.right_active {
-                "右侧：← 展开 · → 父级"
+                label("右侧：← 展开 · → 父级", "Right: Left child / Right parent")
             } else {
-                "左侧：→ 展开 · ← 父级"
+                label("左侧：→ 展开 · ← 父级", "Left: Right child / Left parent")
             }
             .into();
             self.rebudget();
@@ -470,8 +544,9 @@ impl Ui {
                 &mut out,
                 0,
                 0,
-                &format!(
+                &ui_format!(
                     "请放大终端到 {}×8；{} 单栏 / {} 退出",
+                    "Resize to {}x8; {} single pane / {} quit",
                     if self.other.is_some() { 75 } else { 36 },
                     self.pane.browser.conf.keys["toggle_dual"],
                     self.pane.browser.conf.keys["quit"]
@@ -518,7 +593,7 @@ impl Ui {
                     &mut out,
                     y,
                     middle as isize,
-                    "│",
+                    label("│", "|"),
                     tree,
                     Some(&self.pane.browser.conf.line_color),
                     false,
@@ -529,9 +604,9 @@ impl Ui {
                 0,
                 1,
                 if self.right_active {
-                    "filex 左"
+                    label("filex 左", "filex left")
                 } else {
-                    "filex 左 ●"
+                    label("filex 左 ●", "filex left *")
                 },
                 middle,
                 None,
@@ -541,7 +616,11 @@ impl Ui {
                 &mut out,
                 0,
                 (middle + 2) as isize,
-                if self.right_active { "右 ●" } else { "右" },
+                if self.right_active {
+                    label("右 ●", "right *")
+                } else {
+                    label("右", "right")
+                },
                 tree,
                 None,
                 false,
@@ -565,7 +644,7 @@ impl Ui {
                     &mut out,
                     y,
                     tree as isize,
-                    "│",
+                    label("│", "|"),
                     w,
                     Some(&self.pane.browser.conf.line_color),
                     false,
@@ -584,8 +663,9 @@ impl Ui {
                 &mut out,
                 3,
                 (tree + 2) as isize,
-                &format!(
+                &ui_format!(
                     "Dashboard · q 收起 · {} / {} 调宽",
+                    "Dashboard - q close - {} / {} width",
                     self.pane.browser.conf.keys["dashboard_narrow"],
                     self.pane.browser.conf.keys["dashboard_widen"]
                 ),
@@ -599,16 +679,18 @@ impl Ui {
         }
         let selected = self.pane.browser.selected.borrow();
         let detail = if let Some(target) = &self.pane.link_target {
-            format!(
+            ui_format!(
                 "链接目标: {} · {} 返回链接 · x 进入目标目录",
+                "Link target: {} - {} return - x exit to target folder",
                 target.display(),
                 if self.right_active { "→" } else { "←" }
             )
         } else if !selected.error.is_empty() {
             selected.error.clone()
         } else if selected.omitted > 0 {
-            format!(
+            ui_format!(
                 "还有 {} 项未显示；受 max_entries / max_loaded_nodes 限制",
+                "{} entries omitted (max_entries / max_loaded_nodes)",
                 selected.omitted
             )
         } else {
@@ -627,12 +709,25 @@ impl Ui {
             None,
             false,
         )?;
-        put(
-            &mut out,
-            h - 1,
-            1,
-            &format!(
-                "{} {}收起 {}重命名 Ctrl+Alt+C路径 Enter打开 {}信息 {}退出 {}双栏 {}切换 ?帮助",
+        let footer = if terminal_profile::get().ascii {
+            format!(
+                "{} {}quit ?help Enter:expand/file {}menu {}info y:path {}fold {}rename {}dual {}switch",
+                if self.right_active {
+                    "Up/Down peers Left child Right parent"
+                } else {
+                    "Up/Down peers Left parent Right child"
+                },
+                self.pane.browser.conf.keys["quit"],
+                self.pane.browser.conf.keys["open_with"],
+                self.pane.browser.conf.keys["dashboard"],
+                self.pane.browser.conf.keys["collapse"],
+                self.pane.browser.conf.keys["rename"],
+                self.pane.browser.conf.keys["toggle_dual"],
+                self.pane.browser.conf.keys["switch_pane"]
+            )
+        } else {
+            format!(
+                "{} {}收起 {}重命名 Ctrl+Alt+C/y路径 Enter展开/文件打开 {}菜单 {}信息 {}退出 {}双栏 {}切换 ?帮助",
                 if self.right_active {
                     "↑↓ 同层循环 → 父级 ← 展开"
                 } else {
@@ -640,15 +735,14 @@ impl Ui {
                 },
                 self.pane.browser.conf.keys["collapse"],
                 self.pane.browser.conf.keys["rename"],
+                self.pane.browser.conf.keys["open_with"],
                 self.pane.browser.conf.keys["dashboard"],
                 self.pane.browser.conf.keys["quit"],
                 self.pane.browser.conf.keys["toggle_dual"],
                 self.pane.browser.conf.keys["switch_pane"]
-            ),
-            w,
-            None,
-            false,
-        )?;
+            )
+        };
+        put(&mut out, h - 1, 1, &footer, w, None, false)?;
         queue!(out, SetAttribute(Attribute::Reset), ResetColor).map_err(ioerr)?;
         out.flush().map_err(ioerr)
     }
@@ -657,7 +751,7 @@ impl Ui {
         loop {
             self.draw()?;
             let (w, h) = terminal::size().map_err(ioerr)?;
-            let mut value = format!("{label}: {text}");
+            let mut value = clean(&format!("{label}: {text}"));
             while value.width() >= w.saturating_sub(2) as usize && !value.is_empty() {
                 let c = value.chars().next().unwrap();
                 value.drain(..c.len_utf8());
@@ -690,6 +784,7 @@ impl Ui {
                     text.pop();
                 }
                 "\x15" => text.clear(),
+                "\x16" => text.push_str(&self.clipboard),
                 _ => {
                     if key.chars().count() == 1 && !key.chars().any(char::is_control) {
                         text.push_str(&key)
@@ -715,7 +810,10 @@ impl Ui {
                 &mut out,
                 h - 1,
                 1,
-                "↑↓ 滚动 ←→ 横移 Esc / q / Enter 返回",
+                label(
+                    "↑↓ 滚动 ←→ 横移 Esc / q / Enter 返回",
+                    "Up/Down scroll, Left/Right pan, Esc/q/Enter return",
+                ),
                 w,
                 None,
                 false,
@@ -723,7 +821,7 @@ impl Ui {
             out.flush().map_err(ioerr)?;
             drop(out);
             match read_key(self.pane.browser.conf.auto_english)?.as_str() {
-                "escape" | "q" | "enter" => return Ok(()),
+                "escape" | "q" | "enter" | "\x03" => return Ok(()),
                 "down" | "j" => top = (top + 1).min(rows.len().saturating_sub(body)),
                 "up" | "k" => top = top.saturating_sub(1),
                 "pagedown" => top = (top + body).min(rows.len().saturating_sub(body)),
@@ -763,7 +861,10 @@ impl Ui {
                 &mut out,
                 h - 1,
                 1,
-                "↑↓ 选择 Enter 确认 Esc 取消",
+                label(
+                    "↑↓ 选择 Enter 确认 Esc 取消",
+                    "Up/Down select, Enter confirm, Esc cancel",
+                ),
                 w,
                 None,
                 false,
@@ -771,7 +872,7 @@ impl Ui {
             out.flush().map_err(ioerr)?;
             drop(out);
             match read_key(self.pane.browser.conf.auto_english)?.as_str() {
-                "escape" => return Ok(None),
+                "escape" | "\x03" => return Ok(None),
                 "enter" => return Ok(Some(selected)),
                 "down" | "j" => selected = (selected + 1) % options.len(),
                 "up" | "k" => selected = (selected + options.len() - 1) % options.len(),
@@ -781,36 +882,75 @@ impl Ui {
     }
     fn open(&mut self, method: &str) -> Result<(), String> {
         let path = self.selection_path();
+        let cli = !terminal_profile::get().desktop;
+        if method == "@preview" {
+            return self.pager(
+                label("文件预览", "File preview"),
+                &files::preview(&path, self.pane.browser.conf.preview_bytes),
+            );
+        }
+        if cli
+            && path.is_dir()
+            && self.pane.link_target.is_none()
+            && !self
+                .pane
+                .browser
+                .conf
+                .openers
+                .get(method)
+                .is_some_and(|o| o.terminal)
+        {
+            let node = self.pane.browser.selected.clone();
+            if node.borrow().expanded {
+                node.borrow_mut().expanded = false;
+            } else {
+                self.pane.browser.expand(&node, None);
+            }
+            return Ok(());
+        }
+        let method = if cli {
+            let Some(id) = files::cli_method(&self.pane.browser.conf, method) else {
+                return self.pager(
+                    label("文件预览", "File preview"),
+                    &files::preview(&path, self.pane.browser.conf.preview_bytes),
+                );
+            };
+            id.to_owned()
+        } else {
+            method.to_owned()
+        };
+        let method = method.as_str();
+        if self.pane.browser.conf.openers[method].copy_path {
+            self.clipboard = std::path::absolute(&path)
+                .map_err(ioerr)?
+                .to_string_lossy()
+                .into_owned();
+        }
         let (mut command, terminal) = files::open_command(&path, &self.pane.browser.conf, method)?;
         if terminal
             && self.pane.browser.conf.tmux_right
             && let Some(pane) = tmux::open_in_right_pane(&command)
         {
             self.meta_path = None;
-            self.message = format!(
+            self.message = ui_format!(
                 "已用 {} 在右侧 pane {pane} 打开",
+                "Opened with {} in right pane {pane}",
                 self.pane.browser.conf.openers[method].label
             );
             return Ok(());
         }
         if terminal {
             terminal::disable_raw_mode().map_err(ioerr)?;
-            execute!(
-                io::stdout(),
-                SetAttribute(Attribute::Reset),
-                ResetColor,
-                Show,
-                PopKeyboardEnhancementFlags,
-                DisableFocusChange,
-                Print("\x1b[>4;0m"),
-                LeaveAlternateScreen
-            )
-            .map_err(ioerr)?;
+            Guard::leave()?;
             let mut result = command.status().map_err(ioerr);
             if self.pane.browser.conf.openers[method].pause_on_exit
                 && let Ok(status) = &result
             {
-                println!("\n程序结束 ({status}) · 按 Enter 返回 filex");
+                println!(
+                    "\n{} ({status}) - {}",
+                    label("程序结束", "Program exited"),
+                    label("按 Enter 返回 filex", "Enter to return to filex")
+                );
                 terminal::enable_raw_mode().map_err(ioerr)?;
                 loop {
                     match read_key(self.pane.browser.conf.auto_english) {
@@ -824,15 +964,7 @@ impl Ui {
                 }
             }
             terminal::enable_raw_mode().map_err(ioerr)?;
-            execute!(
-                io::stdout(),
-                EnterAlternateScreen,
-                EnableFocusChange,
-                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
-                Print("\x1b[>4;2m"),
-                Hide
-            )
-            .map_err(ioerr)?;
+            Guard::enter()?;
             result?;
         } else if command.get_args().any(|arg| {
             arg.to_string_lossy()
@@ -849,7 +981,11 @@ impl Ui {
                 .map_err(ioerr)?;
         }
         self.meta_path = None;
-        self.message = format!("已用 {} 打开", self.pane.browser.conf.openers[method].label);
+        self.message = ui_format!(
+            "已用 {} 打开",
+            "Opened with {}",
+            self.pane.browser.conf.openers[method].label
+        );
         Ok(())
     }
     fn choose_open(&mut self) -> Result<(), String> {
@@ -860,13 +996,18 @@ impl Ui {
         } else {
             node.borrow().dir
         };
-        let default = self
+        let mut default = self
             .pane
             .browser
             .conf
             .rule(&path, &self.pane.browser.conf.defaults, dir)
             .cloned()
             .unwrap_or("system".into());
+        if !terminal_profile::get().desktop {
+            default = files::cli_method(&self.pane.browser.conf, &default)
+                .unwrap_or("@preview")
+                .to_owned();
+        }
         let mut ids = vec![default.clone()];
         ids.extend(
             self.pane
@@ -874,32 +1015,52 @@ impl Ui {
                 .conf
                 .openers
                 .keys()
-                .filter(|id| **id != default)
+                .filter(|id| {
+                    **id != default
+                        && (terminal_profile::get().desktop
+                            || self.pane.browser.conf.openers[*id].terminal)
+                })
                 .cloned(),
         );
         let mut options: Vec<(Option<String>, String)> = ids
             .iter()
             .map(|id| {
+                if id == "@preview" {
+                    return (Some(id.clone()), "Preview [default]".into());
+                }
                 let opener = &self.pane.browser.conf.openers[id];
                 (
                     Some(id.clone()),
                     format!(
                         "{} ({id}){}{}",
                         opener.label,
-                        if id == &default { " [默认]" } else { "" },
+                        if id == &default {
+                            label(" [默认]", " [default]")
+                        } else {
+                            ""
+                        },
                         if files::available(&opener.command[0]) {
                             ""
                         } else {
-                            " [未安装]"
+                            label(" [未安装]", " [not installed]")
                         }
                     ),
                 )
             })
             .collect();
         if dir && self.pane.link_target.is_none() {
-            options.insert(0, (None, "fileX 展开 / 收起目录".into()));
+            options.insert(
+                0,
+                (
+                    None,
+                    label("fileX 展开 / 收起目录", "Expand / collapse folder").into(),
+                ),
+            );
         }
-        if let Some(index) = self.choose(&format!("打开方式: {}", path.display()), &options)? {
+        if let Some(index) = self.choose(
+            &ui_format!("打开方式: {}", "Open with: {}", path.display()),
+            &options,
+        )? {
             if let Some(method) = &options[index].0 {
                 self.open(method)?
             } else if node.borrow().expanded {
@@ -934,7 +1095,10 @@ impl Ui {
                 &mut out,
                 height.saturating_sub(1) as usize,
                 0,
-                "再次按 Enter 确认 · Esc 取消",
+                label(
+                    "再次按 Enter 确认 · Esc 取消",
+                    "Press Enter again to confirm, Esc cancel",
+                ),
                 width as usize,
                 None,
                 false,
@@ -950,8 +1114,9 @@ impl Ui {
     }
     fn operation(&mut self, action: &str) -> Result<(), String> {
         if self.pane.link_target.is_some() {
-            return Err(format!(
+            return Err(ui_format!(
                 "请按 {} 选回链接，或按 f 进入目标目录后操作文件",
+                "{} returns to link; f enters target folder for file operations",
                 if self.right_active { "→" } else { "←" }
             ));
         }
@@ -959,14 +1124,19 @@ impl Ui {
         if Rc::ptr_eq(&self.pane.browser.selected, &self.pane.browser.root)
             && ["rename", "move", "trash"].contains(&action)
         {
-            return Err(format!(
+            return Err(ui_format!(
                 "不能操作当前根目录；先按 {} 引入其父目录",
+                "Cannot modify root; use {} to introduce its parent",
                 if self.right_active { "→" } else { "←" }
             ));
         }
         let dest = match action {
             "trash" => {
-                if !self.confirm(&format!("送入回收站 {}？", source.display()))? {
+                if !self.confirm(&ui_format!(
+                    "送入回收站 {}？",
+                    "Trash {}?",
+                    source.display()
+                ))? {
                     return Ok(());
                 }
                 files::trash(&source)?;
@@ -974,11 +1144,17 @@ impl Ui {
             }
             _ => {
                 let label = match action {
-                    "new_file" => "新文件名称",
-                    "new_folder" => "新目录名称",
-                    "rename" => "新名称",
-                    "copy" => "复制到完整目标路径（含名称）",
-                    _ => "移动到完整目标路径（含名称）",
+                    "new_file" => label("新文件名称", "New file name"),
+                    "new_folder" => label("新目录名称", "New folder name"),
+                    "rename" => label("新名称", "New name"),
+                    "copy" => label(
+                        "复制到完整目标路径（含名称）",
+                        "Copy to full path (including name)",
+                    ),
+                    _ => label(
+                        "移动到完整目标路径（含名称）",
+                        "Move to full path (including name)",
+                    ),
                 };
                 let initial = if ["copy", "move"].contains(&action)
                     && let Some(other) = &self.other
@@ -1063,7 +1239,7 @@ impl Ui {
             self.pane.browser.selected = node
         }
         self.meta_path = None;
-        self.message = format!("完成: {}", dest.display());
+        self.message = ui_format!("完成: {}", "Done: {}", dest.display());
         Ok(())
     }
     fn action(&mut self, key: &str) -> Result<bool, String> {
@@ -1084,12 +1260,24 @@ impl Ui {
             .arrow_action(navigation_key)
             .unwrap_or_else(|| match key {
                 " " => "expand",
+                "enter"
+                    if self.pane.link_target.is_none()
+                        && self.pane.browser.selected.borrow().dir =>
+                {
+                    "expand_folder"
+                }
                 "enter" => "open_with",
                 "delete" => "trash",
                 "f5" | "ctrl+f5" => "refresh",
                 "\x06" | "/" => "search",
                 "\x0c" => "goto",
-                _ => self.pane.browser.conf.action(key).unwrap_or(""),
+                _ => self.pane.browser.conf.action(key).unwrap_or(if key == "y" {
+                    "copy_path"
+                } else if key == "\x03" {
+                    "quit"
+                } else {
+                    ""
+                }),
             })
             .to_string();
         if matches!(
@@ -1124,8 +1312,9 @@ impl Ui {
                     && (terminal::size().map_err(ioerr)?.0 as usize)
                         < if self.other.is_some() { 110 } else { 70 }
                 {
-                    self.message = format!(
+                    self.message = ui_format!(
                         "Dashboard 需要至少 {} 列",
+                        "Dashboard needs at least {} columns",
                         if self.other.is_some() { 110 } else { 70 }
                     )
                 }
@@ -1133,8 +1322,9 @@ impl Ui {
             "dashboard_narrow" | "dashboard_widen" => {
                 let width = terminal::size().map_err(ioerr)?.0 as usize;
                 if width < if self.other.is_some() { 110 } else { 70 } {
-                    self.message = format!(
+                    self.message = ui_format!(
                         "Dashboard 需要至少 {} 列",
+                        "Dashboard needs at least {} columns",
                         if self.other.is_some() { 110 } else { 70 }
                     );
                 } else {
@@ -1149,14 +1339,21 @@ impl Ui {
                         (width - if self.other.is_some() { 77 } else { 38 }).min(240),
                     );
                     self.dashboard = true;
-                    self.message = format!(
+                    self.message = ui_format!(
                         "信息面板宽度: {} 列",
+                        "Dashboard width: {} columns",
                         self.pane.browser.conf.dashboard_width
                     );
                 }
             }
             "up" => self.pane.browser.step(-1),
             "down" => self.pane.browser.step(1),
+            "expand_folder" => {
+                let node = self.pane.browser.selected.clone();
+                if !node.borrow().expanded {
+                    self.pane.browser.expand(&node, None);
+                }
+            }
             "expand" => {
                 if self.pane.link_target.is_none() {
                     if self.pane.browser.selected.borrow().link {
@@ -1170,7 +1367,7 @@ impl Ui {
             }
             "collapse" => self.pane.browser.left(),
             "expand_all" => {
-                self.message = "正在展开…".into();
+                self.message = label("正在展开…", "Expanding...").into();
                 self.draw()?;
                 self.message = self.pane.browser.expand_all()?
             }
@@ -1187,7 +1384,7 @@ impl Ui {
                     let folder = files::exit_directory_path(target)?;
                     self.pane.browser.set_root(&folder.to_string_lossy())?;
                     self.pane.link_target = None;
-                    self.message = format!("根目录: {}", folder.display());
+                    self.message = ui_format!("根目录: {}", "Root: {}", folder.display());
                 } else {
                     self.message = self.pane.browser.focus_root();
                 }
@@ -1201,8 +1398,20 @@ impl Ui {
                 self.pane.browser.refresh()
             }
             "copy_path" => {
-                files::copy_path(&self.selection_path())?;
-                self.message = "已复制绝对路径".into();
+                let path = self.selection_path();
+                self.clipboard = std::path::absolute(&path)
+                    .map_err(ioerr)?
+                    .to_string_lossy()
+                    .into_owned();
+                if terminal_profile::get().desktop {
+                    files::copy_path(&path)?;
+                    self.message = "已复制绝对路径".into();
+                } else {
+                    self.message = format!(
+                        "Path copied (Ctrl+V in prompts): {}",
+                        clean(&self.clipboard)
+                    );
+                }
             }
             "refresh" => {
                 self.pane.browser.refresh();
@@ -1220,7 +1429,7 @@ impl Ui {
                 self.rebudget();
                 self.pane.browser.refresh();
                 self.meta_path = None;
-                self.message = "配置已重新读取".into()
+                self.message = label("配置已重新读取", "Config reloaded").into()
             }
             "goto" => {
                 let path = self
@@ -1231,7 +1440,7 @@ impl Ui {
                     .path
                     .to_string_lossy()
                     .into_owned();
-                if let Some(value) = self.prompt("进入目录", &path)?
+                if let Some(value) = self.prompt(label("进入目录", "Go to directory"), &path)?
                     && !value.is_empty()
                 {
                     self.pane.browser.set_root(&value)?;
@@ -1241,11 +1450,16 @@ impl Ui {
             }
             "search" => {
                 let query = self.pane.query.clone();
-                if let Some(value) = self.prompt("搜索根目录（含未展开目录）", &query)?
-                {
+                if let Some(value) = self.prompt(
+                    label(
+                        "搜索根目录（含未展开目录）",
+                        "Search root (including closed folders)",
+                    ),
+                    &query,
+                )? {
                     self.pane.query = value;
                     if !self.pane.query.is_empty() {
-                        self.message = "正在搜索…".into();
+                        self.message = label("正在搜索…", "Searching...").into();
                         self.draw()?;
                         self.pane.browser.search_key = None;
                         self.message = self.pane.browser.find_next(&self.pane.query, 1)?
@@ -1284,7 +1498,7 @@ impl Ui {
                     &self.pane.browser.root.borrow().path,
                     &self.pane.browser.conf,
                 );
-                self.pager("文件 / 链接信息", &text)?;
+                self.pager(label("文件 / 链接信息", "File / link information"), &text)?;
             }
             "preview" => {
                 let path = self.selection_path();
@@ -1304,8 +1518,12 @@ impl Ui {
                     .map(|(action, key)| format!("{key:12} {action}"))
                     .collect::<Vec<_>>()
                     .join("\n");
-                text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C 复制选中项目的绝对路径\nf 当前目录设为根并刷新\nEnter 选择打开方式 · o 扩展名默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nv 双栏开关 · Tab 切换操作侧 · 右栏 ← 展开 / → 父级\n双栏 c/m 预填另一侧目录的完整目标路径，Enter 执行 / Esc 取消\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\n复制 / 移动填写完整目标路径，不覆盖已有目标。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
-                self.pager("filex 快捷键", &text)?
+                if terminal_profile::get().ascii {
+                    text.push_str("\n\nUp/Down (k/j): all visible peers at the same depth; wrap around.\nRight (l): expand / enter child; Left: parent (mirrored on right pane).\nh collapse; E/C expand/collapse all; . hidden files; f focus root.\na / Ctrl+N new file; A new folder (Ctrl+Shift+N may equal Ctrl+N on TTY).\nr rename; c/m copy/move; Delete/D trash, Enter again confirms, Esc cancels.\ny / Ctrl+Alt+C copy absolute path; Ctrl+V paste it in input prompts.\nCLI stores paths inside filex; desktop also uses the Wayland clipboard.\nx exit to selected folder (file: parent); Q / Ctrl+C quit.\nEnter expands folders (cursor stays); files: open with. w menu; o default; p preview; q dashboard; I link information.\nHeadless defaults: Nano, Neovim, Vim, then built-in preview; no automatic script execution.\nPython / Rscript / Bash can be explicitly selected to run scripts.\nCtrl+F / / search; n/N matches; g / Ctrl+L change root.\nCtrl+R / F5 refresh; comma reload config; [ / ] dashboard width.\nv toggle mirrored panes; Tab switch; c/m prefill the other folder.\nH/L pan; PgUp/PgDn page peers; Ctrl+U clear input.\nTerminal openers reuse an idle pane on the right in tmux.\nCopy/move require the full destination path and never overwrite it.");
+                } else {
+                    text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C / y 复制选中项目的绝对路径；输入框 Ctrl+V 粘贴\nf 当前目录设为根并刷新\nEnter 展开目录（光标保留）/ 文件选择打开方式 · w 打开菜单 · o 默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nv 双栏开关 · Tab 切换操作侧 · 右栏 ← 展开 / → 父级\n双栏 c/m 预填另一侧目录的完整目标路径，Enter 执行 / Esc 取消\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\n复制 / 移动填写完整目标路径，不覆盖已有目标。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
+                }
+                self.pager(label("filex 快捷键", "filex keys"), &text)?
             }
             _ => match key {
                 "escape" => {
@@ -1348,14 +1566,19 @@ impl Ui {
     }
 }
 pub fn run(browser: Browser, path: PathBuf) -> Result<Option<PathBuf>, String> {
-    let _input = crate::input::EnglishGuard::new(browser.conf.auto_english);
-    let _host = crate::terminal_host::KonsoleGuard::new(browser.conf.konsole_shortcuts);
-    let _tmux_keys = crate::terminal_host::TmuxKeys::new(browser.conf.tmux_extended_keys);
-    let _tmux_focus = crate::terminal_host::TmuxFocus::new(true);
+    let _signals = terminal_profile::Signals::new().map_err(ioerr)?;
+    let profile = terminal_profile::get();
+    let _input = crate::input::EnglishGuard::new(browser.conf.auto_english && profile.desktop);
+    let _host =
+        crate::terminal_host::KonsoleGuard::new(browser.conf.konsole_shortcuts && profile.desktop);
+    let _tmux_keys =
+        crate::terminal_host::TmuxKeys::new(browser.conf.tmux_extended_keys && profile.enhanced);
+    let _tmux_focus = crate::terminal_host::TmuxFocus::new(profile.enhanced);
     let _guard = Guard::new()?;
     let dual = browser.conf.dual_pane;
     let budget = browser.conf.max_loaded;
     let mut ui = Ui {
+        clipboard: String::new(),
         pane: Pane::new(browser),
         other: None,
         right_active: false,
@@ -1380,7 +1603,7 @@ pub fn run(browser: Browser, path: PathBuf) -> Result<Option<PathBuf>, String> {
         match ui.action(&key) {
             Ok(true) => break,
             Ok(false) => {}
-            Err(e) => ui.message = format!("操作失败: {}", clean(&e)),
+            Err(e) => ui.message = ui_format!("操作失败: {}", "Operation failed: {}", clean(&e)),
         }
     }
     Ok(ui.exit_directory)
@@ -1425,6 +1648,7 @@ mod dual_tests {
             ..Config::default()
         };
         Ui {
+            clipboard: String::new(),
             pane: Pane::new(Browser::new(root, conf).unwrap()),
             other: None,
             right_active: false,
@@ -1458,6 +1682,38 @@ mod dual_tests {
         area.paint(&mut out, 3, 100, "outside", None, false, false, false)
             .unwrap();
         assert!(out.is_empty());
+    }
+    #[test]
+    fn enter_expands_folders_without_moving_or_closing_other_branches() {
+        let f = Fixture::new();
+        let mut ui = ui(&f.0);
+        ui.action("right").unwrap();
+        let first = ui.pane.browser.selected.clone();
+        ui.action("enter").unwrap();
+        assert!(first.borrow().expanded);
+        assert!(!first.borrow().children.is_empty());
+        assert!(Rc::ptr_eq(&ui.pane.browser.selected, &first));
+        let child = first.borrow().children[0].clone();
+        let loaded = ui.pane.browser.loaded();
+        ui.action("enter").unwrap();
+        assert!(Rc::ptr_eq(&ui.pane.browser.selected, &first));
+        assert!(Rc::ptr_eq(&first.borrow().children[0], &child));
+        assert_eq!(ui.pane.browser.loaded(), loaded);
+        ui.action("down").unwrap();
+        let second = ui.pane.browser.selected.clone();
+        ui.action("enter").unwrap();
+        assert!(first.borrow().expanded && second.borrow().expanded);
+        assert!(Rc::ptr_eq(&ui.pane.browser.selected, &second));
+        ui.action("v").unwrap();
+        ui.action("\t").unwrap();
+        ui.action("right").unwrap(); // Mirrored pane: introduce parent.
+        ui.action("left").unwrap(); // Select a folder at the parent level.
+        let mirrored = ui.pane.browser.selected.clone();
+        ui.action("h").unwrap();
+        ui.action("enter").unwrap();
+        assert!(ui.right_active && mirrored.borrow().expanded);
+        assert!(Rc::ptr_eq(&ui.pane.browser.selected, &mirrored));
+        assert!(first.borrow().expanded && second.borrow().expanded);
     }
     #[test]
     fn independent_selection_mirrored_arrows_and_bounded_pane_caches() {

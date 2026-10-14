@@ -56,9 +56,9 @@ folder_colors 按目录 basename 精确匹配，区分大小写，可配置任�
 
 Rust Dashboard 使用 Linux statx 的 BTIME 和文件元数据；创建时间未提供时显示不可用，不用 ctime 冒充。修改时间为 mtime。普通文件显示字节数，目录显示自身元数据大小，符号链接显示链接自身大小，均有标识。
 
-`[openers.NAME]` 定义 label、command 参数列表、terminal 与可选 copy_path / pause_on_exit 布尔值，`{path}` 替换完整文件路径，{filex} / {toolkit} 分别替换为本产品目录 / 相邻 toolkit 目录，普通直接打开使用参数数组；复用 tmux 空闲 shell 时按上述转义规则发送命令。Enter 显示打开方式菜单，按 `[open_defaults]` 的最长扩展名后缀排序默认项；`o` 直接打开。目录菜单另有 fileX 展开 / 收起选项。TUI 的 terminal=true 程序先尝试 tmux 右侧 pane；在当前终端运行时恢复终端模式，退出后回到原树。已加入 Nano：openers.nano 的 command=["nano", "--", "{path}"]、terminal=true；Enter 菜单可选择，也可在 open_defaults 中把指定后缀映射为 nano。未安装的程序明确提示。
+`[openers.NAME]` 定义 label、command 参数列表、terminal 与可选 copy_path / pause_on_exit 布尔值，`{path}` 替换完整文件路径，{filex} / {toolkit} 分别替换为本产品目录 / 相邻 toolkit 目录，普通直接打开使用参数数组；复用 tmux 空闲 shell 时按上述转义规则发送命令。普通文件 Enter 或任意节点 w 显示打开方式菜单，folder Enter 直接展开子树且保留光标；按 `[open_defaults]` 的最长扩展名后缀排序默认项；`o` 直接打开。目录菜单另有 fileX 展开 / 收起选项。TUI 的 terminal=true 程序先尝试 tmux 右侧 pane；在当前终端运行时恢复终端模式，退出后回到原树。已加入 Nano：openers.nano 的 command=["nano", "--", "{path}"]、terminal=true；Enter 菜单可选择，也可在 open_defaults 中把指定后缀映射为 nano。未安装的程序明确提示。
 
-`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 直接发出终端 RGB 颜色，Konsole 已支持；终端自身的颜色能力会影响实际显示。非空 NO_COLOR 环境变量使 Crossterm 禁用颜色，需要彩色时 unset NO_COLOR；不修改用户环境。默认 .js / .mjs 为 #FFD700，并有 .r / .cpp / .sh / .mp3 / .mp4 颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox， .md / .markdown 使用 toolkit 渲染后在 Firefox 打开，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
+`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 自动按能力发出 16 / 256 / RGB 颜色；KDE 现代终端保留 RGB，可在 terminal.color_mode 中覆盖；终端自身的颜色能力会影响实际显示。非空 NO_COLOR 环境变量使 Crossterm 禁用颜色，需要彩色时 unset NO_COLOR；不修改用户环境。默认 .js / .mjs 为 #FFD700，并有 .r / .cpp / .sh / .mp3 / .mp4 颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox， .md / .markdown 使用 toolkit 渲染后在 Firefox 打开，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
 
 
 Python 执行项使用 command=["python", "{path}"]、terminal=true、pause_on_exit=true。当前 TUI 终端执行结束后等待 Enter / Esc，tmux pane 留下输出与 shell 提示符。Enter 可选「Python 执行」；把 open_defaults 的 .py 改为 python 后 o 直接运行。终端程序的工作目录为选中文件所在目录（选中目录时为目录本身）；tmux 复用也应用此目录，但不修改该 pane shell 的工作目录。Python、编辑器与浏览器为外部程序，其内存不计入 TUI 的 15 MB 目标。
@@ -67,7 +67,7 @@ Markdown 默认 opener 为 markdown：copy_path=true 先复制文件绝对路径
 
 ## TUI 英文输入法
 
-本机使用 Fcitx5，EnglishGuard 在真实 TUI 启动时查询当前 method 并切到 keyboard-us；没有 Fcitx5 服务或工具时继续启动。已有英文键盘时不重复切换；配置 [input_method] auto_english=false 可关闭。正常退出、Ctrl+C 退出或 Rust 错误返回时恢复进入前的 method。只调整当前 Fcitx 状态，不改 profile、系统语言或快捷键，也不应用于 --print-tree。SIGKILL / 强制终止无法执行恢复；其他输入法框架目前未接入。
+本机使用 Fcitx5，EnglishGuard 仅在桌面会话的真实 TUI 启动时查询当前 method 并切到 keyboard-us；没有 Fcitx5 服务或工具时继续启动。已有英文键盘时不重复切换；配置 [input_method] auto_english=false 可关闭。正常退出、Ctrl+C 退出或 Rust 错误返回时恢复进入前的 method。只调整当前 Fcitx 状态，不改 profile、系统语言或快捷键，也不应用于 --print-tree。SIGKILL / 强制终止无法执行恢复；其他输入法框架目前未接入。
 
 ## 文件操作边界
 
@@ -110,7 +110,7 @@ Ctrl+F5 固定刷新目录，与 F5 / 默认 Ctrl+R 相同；接受终端 CSI 15
 ## 文件与维护
 
 - `Cargo.toml` / `Cargo.lock`：Rust 依赖与锁定版本，release 使用 LTO / stripped binary。
-- `src/config.rs`、`model.rs`、`files.rs`、`tui.rs`、`main.rs`、`tmux.rs`、`input.rs`、`links.rs`、`terminal_host.rs`、`tests.rs`：配置、有限缓存树与布局、文件操作 / statx / 打开方式、终端界面、CLI、tmux 右侧 pane 路由、英文输入法恢复、链接扫描、宿主终端快捷键租约、Rust 测试。
+- `src/config.rs`、`model.rs`、`files.rs`、`tui.rs`、`main.rs`、`tmux.rs`、`input.rs`、`links.rs`、`terminal_host.rs`、`terminal_profile.rs`、`tests.rs`：配置、有限缓存树与布局、文件操作 / statx / 打开方式、终端界面、CLI、tmux 右侧 pane 路由、英文输入法恢复、链接扫描、宿主终端快捷键租约、Rust 测试。
 - `filex/`：保留的 Python 历史 TUI 与对应模型 / 配置 / 操作，`details.py` 和 `opening.py` 提供元数据与可配置启动器。原 Python TUI 为历史兼容实现，默认启动器已使用 Rust。
 - `filex.sh`：保留调用者工作目录，exec Rust release 程序。缺少 release 时自动编译。
 - `scripts/build.sh`、`measure_memory.py`：更新 release 程序、验证应用内存。
@@ -132,7 +132,7 @@ python scripts/measure_memory.py
 
 Konsole 当前窗口 new-window 动作停用已在本机独立终端实测；最后一个实例退出恢复原启用 / 禁用状态由隔离 DBus CLI 加两个真实 TUI 实例验证。本机 Konsole 禁用 sendText 敏感 DBus API，因此未用该接口验证真实窗口中的 Q 退出；没有更改这项设置。tmux 恢复原 extended-keys / format 已在隔离真实 server 完成验证。
 
-内存验证记录中测量的 release 的项目目录 / 20000 文件 / 7200 多分支文件 / 2400 硬链接 / 7200 软链接场景峰值分别为 4.841 / 4.035 / 6.943 / 3.813 / 7.025 MB，双栏两侧展开 7200 文件目录的场景峰值为 8.184 MB；六个场景均低于 15 MB。测试启用 RGB，外部解释器与浏览器不计入应用进程。详情和二进制 SHA256 见 [memory-validation.json](memory-validation.json)。源配置与本机个人配置都通过 Rust / Python 解析验证；filex Bash 函数及命令链接已安装。GUI 已移除，不再设置 GUI 内存目标。
+2026-10-13 当前 release 的项目目录 / 20000 文件 / 7200 多分支文件 / 2400 硬链接 / 7200 软链接场景峰值分别为 4.755 / 4.125 / 6.877 / 3.912 / 7.111 MB，桌面双栏场景为 8.188 MB；TTY 7200 文件单 / 双栏分别为 6.947 / 8.180 MB。八个场景均低于 15 MB。桌面使用 RGB，TTY 使用 16 色；外部解释器与浏览器不计入应用进程。详情和二进制 SHA256 见 [memory-validation.json](memory-validation.json)。源配置与本机个人配置都通过 Rust / Python 解析验证；filex Bash 函数及命令链接已安装。GUI 已移除，不再设置 GUI 内存目标。
 
 ## 2026-10-12 运行修复与祖先路径高亮
 
@@ -463,7 +463,7 @@ Rust Dashboard 使用 Linux statx 的 BTIME 和文件元数据；创建时间未
 
 `[openers.NAME]` 定义 label、command 参数列表和 terminal 布尔值，`{path}` 替换完整文件路径，普通直接打开使用参数数组；复用 tmux 空闲 shell 时按上述转义规则发送命令。Enter 显示打开方式菜单，按 `[open_defaults]` 的最长扩展名后缀排序默认项；`o` 直接打开。目录菜单另有 fileX 展开 / 收起选项。TUI 的 terminal=true 程序先尝试 tmux 右侧 pane；在当前终端运行时恢复终端模式，退出后回到原树；GUI 使用 Konsole。已加入 Nano：openers.nano 的 command=["nano", "--", "{path}"]、terminal=true；Enter 菜单可选择，也可在 open_defaults 中把指定后缀映射为 nano。未安装的程序明确提示。
 
-`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 直接发出终端 RGB 颜色，Konsole 已支持；终端自身的颜色能力会影响实际显示。GUI 使用相同颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
+`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 自动按能力发出 16 / 256 / RGB 颜色；KDE 现代终端保留 RGB，可在 terminal.color_mode 中覆盖；终端自身的颜色能力会影响实际显示。GUI 使用相同颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
 
 #### 文件操作边界
 
@@ -615,3 +615,33 @@ tmux 当前 pane 中直接运行 `filex`，根目录为该 pane 的当前目录�
 
 保留源码目录，移动后重新安装入口。卸载保留配置和用户文件。默认文件管理器保持原设置。
 
+
+
+## 2026-10-13：纯 CLI、SSH 与 Linux TTY 适配
+
+新增 `src/terminal_profile.rs`，启动时一次性选择终端能力，不发送能力查询等待终端回复。通过 TERM=linux 与 KDGETMODE ioctl 检测原生控制台；`--tty` / terminal.mode="tty" 强制控制台模式，即使继承 DISPLAY / WAYLAND_DISPLAY 也不启用桌面打开、Fcitx、Konsole。SSH_CONNECTION / SSH_TTY 或缺少桌面显示变量时采用 CLI 打开方式。tmux 下没有桌面时同样走 CLI 路径，右侧空闲 pane 路由保留，不改变其 extended-keys / focus-events 设置。
+
+控制台不发送 Kitty CSI-u、modifyOtherKeys、焦点报告、1049 alternate screen 控制；仅使用基础光标 / 清屏 / 属性指令，退出清理屏幕并恢复 termios。其他 CLI 终端可用备用屏幕，扩展键协议只在桌面现代终端启用。`terminal.color_mode=auto`：原生 / 强制控制台 16 色；CLI 按 COLORTERM 和 TERM 选择真彩色 / 256 色 / 16 色；现代 KDE 桌面保留 RGB。16 / 256 模式将配置中的 RGB 映射到最近的标准调色板颜色，实际色值还受用户终端调色板影响。NO_COLOR 非空始终优先关闭颜色。参照 [Linux console_codes(4)](https://man7.org/linux/man-pages/man4/console_codes.4.html) 和 [Crossterm 0.29 event API](https://docs.rs/crossterm/0.29.0/crossterm/event/index.html)。
+
+`terminal.charset=auto`：控制台 / 无桌面默认 ASCII 装饰与英文主要交互提示；桌面沿用 Unicode 线条和中文。ascii / unicode 或 `--ascii` 可覆盖。只改变连线、折叠图标和提示，不改文件名 / 文件内容；原生控制台字体仍限制中文文件名显示。不改变系统字体、键盘映射或登录会话。传统控制台不区分所有组合键，a/A 是文件 / 目录创建的可用替代；Linux F5 的 ESC[[E、Ctrl+R 刷新和普通方向键均有真实 PTY 检查。
+
+CLI 的桌面默认 opener 自动退到 terminal.cli_opener，auto 按 nano/nvim/vim 中已定义为 terminal=true 且可执行的程序选择；没有编辑器则用有界内置预览。用户显式配置的终端脚本方法保留，Python / Rscript / Bash 不被作为自动编辑器候选。Enter 菜单过滤 desktop opener，目录仍可展开 / 收起；显式终端程序可以打开目录。terminal=true、copy_path=true 的自定义程序在 CLI 不调用 wl-copy。工具存在检查改为普通文件且有执行权限。GUI Markdown 集成保持原有行为，CLI 中使用文本编辑 / 预览。
+
+复制绝对路径增加 portable `y` 后备（未被配置占用时），Ctrl+Alt+C 保留；路径始终存入当前 Ui 的共享内部缓冲，可跨双栏在输入框 Ctrl+V 粘贴，Ctrl+U 清空已有输入。桌面同时写 Wayland 剪贴板；CLI 不要求系统剪贴板，不向 SSH 客户端发送 OSC52。软链接目标选中时复制目标路径，源链接选中时复制源名称。内部缓冲在进程退出时释放。非 UTF-8 名称在交互输入中仍受原有 String / lossy 显示限制；不把该缓冲宣称为系统剪贴板。
+
+stdin / stdout 非交互、TERM=dumb 自动输出当前目录的一层静态树；--print-tree 仍可显式使用，--ascii 适合脚本。遇到关闭的管道（例如 head 提前退出）正常结束，不出现 Broken pipe panic。静态模式不进入 raw、不获取桌面或 tmux 租约、不启动外部打开程序。TUI 的 SIGTERM / SIGHUP / SIGINT 标记由主循环以 200ms poll 响应并正常释放 Guard，已有提示框也可取消；正在等待外部终端程序时清理须待该程序返回，SIGKILL 无法恢复。基本 Ctrl+C / Q 退出不影响已有目录切换语义。
+
+`[terminal]` 新增 mode=auto/tty、color_mode=auto/16/256/truecolor/none、charset=auto/ascii/unicode、cli_opener=auto/terminal opener 名称；严格校验，个人配置只添加这些缺失项并保留颜色 / 打开规则。模式 / 色彩 / 字符集是启动能力，改后重启；cli_opener 可通过逗号重载。默认模板与 Python 历史配置解析器同步字段；新终端渲染行为只由 Rust 默认 TUI 实现。
+
+新增 tests/test_tty.py 覆盖管道 / dumb / 断管、TTY 16 色与协议排除、a/A / Ctrl+N、重命名、内部路径粘贴、Linux F5、终端 opener 工作目录与返回后新建、无编辑器预览、Bash 执行和等待返回、双栏复制 / 移动 / 镜像导航 / x 回传、删除 Enter 确认与 Esc 取消 / gio 真实回收站、无桌面 tmux 右侧空闲 pane、SIGTERM / SIGHUP termios 恢复、NO_COLOR、配置合法 / 非法值。实际虚拟控制台登录会话未被切换；PTY 验证覆盖 TERM=linux 的输入 / 输出协议，不等同于真实显示硬件 / console 字体视觉验证。
+
+2026-10-13 验证结果：Rust 26 项 + Python 54 项（其中新 CLI / TTY 10 项）全部通过，Clippy -D warnings 通过，release 已更新。内存八场景最大 8.176 MB（TTY 双栏 8.151 MB），均 <15 MB；报告 SHA256 与当前 release 一致。主配置、默认模板均通过 Rust / Python 解析；README 保持 What is it? / How to use 两节。
+
+
+## 2026-10-13：Enter 直接展开文件夹
+
+用户确认目标是 folder 的子目录／文件树。Rust 主树中 Enter 直接展开选中的普通目录，不出现打开方式菜单，不改变选中节点；已展开时保持原树和光标，不自动进入子项，也不收起其他分支。子级选择仍用左右箭头，右侧镜像树方向保持向左。w / keys.open_with 显式选择打开方式，o 用默认程序；普通文件 Enter 仍显示打开方式菜单。菜单、创建 / 复制等输入框中的 Enter 确认语义保持。符号链接仍遵循显式目标选择与不自动遍历的边界。Python 历史 TUI 的普通目录 Enter 同步行为。
+
+新增 Rust 行为检查覆盖重复 Enter 的光标 / 缓存保留、两个同层目录同时展开、镜像右侧展开且另一侧分支保留；真实 TTY PTY 检查 Enter 后创建文件确实落在选中的 folder、上下跳过展开内容切换同层、w 菜单仍能打开 / 取消。
+
+Enter 行为更新后的验证：Rust 27 项 + Python 55 项全部通过（合计 82 项），Clippy 无 warning，release 已重建。八场景内存重测最大 8.188 MB，报告 SHA256 对应当前二进制。

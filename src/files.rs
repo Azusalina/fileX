@@ -1,6 +1,7 @@
 use crate::{
     config::{Config, expand_home, product_root},
     model::clean,
+    terminal_profile::label,
 };
 use std::{
     ffi::CString,
@@ -60,7 +61,7 @@ fn rename_io(source: &Path, dest: &Path) -> io::Result<()> {
 }
 pub fn name_valid(name: &str) -> Result<(), String> {
     if name.is_empty() || [".", ".."].contains(&name) || name.contains('/') || name.contains('\0') {
-        Err("请输入单个有效名称".into())
+        Err(label("请输入单个有效名称", "Enter one valid name").into())
     } else {
         Ok(())
     }
@@ -89,7 +90,11 @@ pub fn destination(source: &Path, text: &str) -> PathBuf {
 }
 fn validate(source: &Path, dest: &Path) -> Result<(), String> {
     if fs::symlink_metadata(dest).is_ok() {
-        return Err(format!("目标已存在: {}", dest.display()));
+        return Err(ui_format!(
+            "目标已存在: {}",
+            "Destination already exists: {}",
+            dest.display()
+        ));
     }
     let parent = dest.parent().ok_or("目标父目录无效")?;
     let parent = fs::canonicalize(parent).map_err(err)?;
@@ -182,19 +187,25 @@ pub fn preview(path: &Path, limit: usize) -> String {
     let read = || -> Result<String, String> {
         let info = fs::symlink_metadata(path).map_err(err)?;
         if info.file_type().is_symlink() {
-            return Ok(format!(
+            return Ok(ui_format!(
                 "符号链接 → {}",
+                "Symbolic link -> {}",
                 clean(&fs::read_link(path).map_err(err)?.to_string_lossy())
             ));
         }
         if info.is_dir() {
-            return Ok(format!(
+            return Ok(ui_format!(
                 "目录\n{}\n展开以查看内容",
+                "Directory\n{}\nExpand to see contents",
                 clean(&path.to_string_lossy())
             ));
         }
         if !info.is_file() {
-            return Ok("特殊文件（设备、管道或套接字），不读取内容".into());
+            return Ok(label(
+                "特殊文件（设备、管道或套接字），不读取内容",
+                "Special file (device, pipe or socket); contents not read",
+            )
+            .into());
         }
         let mut data = Vec::new();
         File::open(path)
@@ -209,10 +220,20 @@ pub fn preview(path: &Path, limit: usize) -> String {
             Err(e) if truncated && e.error_len().is_none() => {
                 std::str::from_utf8(&data[..e.valid_up_to()]).map_err(err)?
             }
-            _ => return Ok(format!("{} bytes\n非 UTF-8 文本 / 二进制文件", info.len())),
+            _ => {
+                return Ok(ui_format!(
+                    "{} bytes\n非 UTF-8 文本 / 二进制文件",
+                    "{} bytes\nNon-UTF-8 text / binary file",
+                    info.len()
+                ));
+            }
         };
         if data.contains(&0) {
-            return Ok(format!("{} bytes\n二进制文件，用默认程序打开", info.len()));
+            return Ok(ui_format!(
+                "{} bytes\n二进制文件，用默认程序打开",
+                "{} bytes\nBinary file; choose an appropriate opener",
+                info.len()
+            ));
         }
         Ok(format!(
             "{} bytes\n\n{}{}",
@@ -222,13 +243,13 @@ pub fn preview(path: &Path, limit: usize) -> String {
                 .collect::<Vec<_>>()
                 .join("\n"),
             if truncated {
-                "\n…预览已截断"
+                label("\n…预览已截断", "\n...preview truncated")
             } else {
                 ""
             }
         ))
     };
-    read().unwrap_or_else(|e| format!("无法预览: {e}"))
+    read().unwrap_or_else(|e| ui_format!("无法预览: {e}", "Cannot preview: {e}"))
 }
 fn date(seconds: i64) -> String {
     let time = seconds as libc::time_t;
@@ -265,24 +286,32 @@ pub fn metadata(path: &Path, root: &Path, conf: &Config) -> String {
         let created = if born == 0 && extended.stx_mask & libc::STATX_BTIME != 0 {
             date(extended.stx_btime.tv_sec)
         } else {
-            "不可用（文件系统未提供）".into()
+            label(
+                "不可用（文件系统未提供）",
+                "Unavailable (not provided by filesystem)",
+            )
+            .into()
         };
         let kind = if info.is_dir() {
-            "目录"
+            label("目录", "Directory")
         } else if info.file_type().is_symlink() {
-            "符号链接"
+            label("符号链接", "Symbolic link")
         } else {
-            "文件"
+            label("文件", "File")
         };
         let note = if info.is_dir() {
-            "目录自身大小，不含子文件总量"
+            label(
+                "目录自身大小，不含子文件总量",
+                "Directory metadata size; excludes contents",
+            )
         } else if info.file_type().is_symlink() {
-            "符号链接自身大小"
+            label("符号链接自身大小", "Symbolic link size")
         } else {
             ""
         };
-        Ok(format!(
+        Ok(ui_format!(
             "{}\n{kind}\n\nCreated / 创建时间\n{created}\n\nModified / 修改时间\n{}\n\nSize / 大小\n{} bytes\n{note}\n\n{}\nPath / 路径\n{}",
+            "{}\n{kind}\n\nCreated\n{created}\n\nModified\n{}\n\nSize\n{} bytes\n{note}\n\n{}\nPath\n{}",
             clean(
                 &path
                     .file_name()
@@ -295,14 +324,30 @@ pub fn metadata(path: &Path, root: &Path, conf: &Config) -> String {
             clean(&path.to_string_lossy())
         ))
     };
-    read().unwrap_or_else(|e| format!("无法读取信息: {e}"))
+    read().unwrap_or_else(|e| ui_format!("无法读取信息: {e}", "Cannot read information: {e}"))
 }
 pub fn available(command: &str) -> bool {
+    let executable =
+        |path: &Path| fs::metadata(path).is_ok_and(|m| m.is_file() && m.mode() & 0o111 != 0);
     if command.contains('/') {
-        return Path::new(command).is_file();
+        return executable(Path::new(command));
     }
     std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|p| p.join(command).is_file()))
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|p| executable(&p.join(command))))
+}
+/// A script extension alone never selects execution as a headless fallback.
+pub fn cli_method<'a>(conf: &'a Config, requested: &'a str) -> Option<&'a str> {
+    if conf.openers.get(requested).is_some_and(|o| o.terminal) {
+        return Some(requested);
+    }
+    if conf.cli_opener != "auto" {
+        return Some(&conf.cli_opener);
+    }
+    ["nano", "nvim", "vim"].into_iter().find(|id| {
+        conf.openers
+            .get(*id)
+            .is_some_and(|o| o.terminal && available(&o.command[0]))
+    })
 }
 pub fn open_command(path: &Path, conf: &Config, method: &str) -> Result<(Command, bool), String> {
     let opener = conf.openers.get(method).ok_or("打开程序未定义")?;
@@ -329,7 +374,7 @@ pub fn open_command(path: &Path, conf: &Config, method: &str) -> Result<(Command
             path.parent().unwrap_or(Path::new("."))
         });
     }
-    if opener.copy_path {
+    if opener.copy_path && crate::terminal_profile::get().desktop {
         copy_path(path)?;
     }
     if !opener.terminal {
@@ -482,11 +527,12 @@ pub fn dashboard(path: &Path, root: &Path, conf: &Config) -> String {
         .take(conf.preview_lines)
         .collect::<Vec<_>>()
         .join("\n");
-    format!(
+    ui_format!(
         "Preview / 前 {} 行\n{}\n\n{compact}",
+        "Preview / first {} lines\n{}\n\n{compact}",
         conf.preview_lines,
         if lines.is_empty() {
-            "（空文件）"
+            label("（空文件）", "(empty file)")
         } else {
             &lines
         }
