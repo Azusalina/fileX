@@ -21,10 +21,21 @@ filex --print-tree --ascii > tree.txt
 
 ```bash
 sudo pacman -S --needed base-devel rust python glib2 nano
-./scripts/build.sh          # 构建 / 更新 release TUI
+./scripts/build.sh       
 ```
 
-Fedora：`sudo dnf install gcc glibc-devel rust cargo python3 glib2 nano`；Ubuntu / Kali：`sudo apt update && sudo apt install build-essential python3 libglib2.0-bin nano curl`，再准备 Rust / Cargo 1.88+。发行版 Rust 太旧时使用 [官方 rustup](https://rustup.rs/) 安装新版；`python3 scripts/check-system.py` 会显示本机版本、依赖和对应安装命令，不自动改系统。Kali 属于 Debian 系，使用 apt，与 Fedora 的 dnf 分开处理。[Kali 官方说明](https://www.kali.org/docs/policy/kali-linux-relationship-with-debian/)。
+Fedora：
+```bash 
+sudo dnf install gcc glibc-devel rust cargo python3 glib2 nano
+```
+
+Ubuntu / Kali：
+```bash
+sudo apt update && sudo apt install build-essential python3 libglib2.0-bin nano curl
+```
+
+
+再准备 Rust / Cargo 1.88+。发行版 Rust 太旧时使用 [官方 rustup](https://rustup.rs/) 安装新版；`python3 scripts/check-system.py` 会显示本机版本、依赖和对应安装命令，不自动改系统。Kali 属于 Debian 系，使用 apt，与 Fedora 的 dnf 分开处理。[Kali 官方说明](https://www.kali.org/docs/policy/kali-linux-relationship-with-debian/)。
 
 在目标发行版执行 `./scripts/build.sh`，再 `./scripts/install.sh`。不要把较新 glibc 的 Arch 二进制直接复制给旧发行版；当前本机构建需要 glibc 2.39+，旧系统应源码重建。已有兼容二进制运行时不需要 Rust。
 
