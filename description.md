@@ -58,7 +58,7 @@ Rust Dashboard 使用 Linux statx 的 BTIME 和文件元数据；创建时间未
 
 `[openers.NAME]` 定义 label、command 参数列表、terminal 与可选 copy_path / pause_on_exit 布尔值，`{path}` 替换完整文件路径，{filex} / {toolkit} 分别替换为本产品目录 / 相邻 toolkit 目录，普通直接打开使用参数数组；复用 tmux 空闲 shell 时按上述转义规则发送命令。普通文件 Enter 或任意节点 w 显示打开方式菜单，folder Enter 直接展开子树且保留光标；按 `[open_defaults]` 的最长扩展名后缀排序默认项；`o` 直接打开。目录菜单另有 fileX 展开 / 收起选项。TUI 的 terminal=true 程序先尝试 tmux 右侧 pane；在当前终端运行时恢复终端模式，退出后回到原树。已加入 Nano：openers.nano 的 command=["nano", "--", "{path}"]、terminal=true；Enter 菜单可选择，也可在 open_defaults 中把指定后缀映射为 nano。未安装的程序明确提示。
 
-`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 自动按能力发出 16 / 256 / RGB 颜色；KDE 现代终端保留 RGB，可在 terminal.color_mode 中覆盖；终端自身的颜色能力会影响实际显示。非空 NO_COLOR 环境变量使 Crossterm 禁用颜色，需要彩色时 unset NO_COLOR；不修改用户环境。默认 .js / .mjs 为 #FFD700，并有 .r / .cpp / .sh / .mp3 / .mp4 颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox， .md / .markdown 使用 toolkit 渲染后在 Firefox 打开，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
+`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 默认 consistent 共用 Linux 16 色；auto 按能力发出 16 / 256 / RGB，truecolor 保留原始 RGB，可在 terminal.color_mode 中覆盖；终端自身的颜色能力会影响实际显示。非空 NO_COLOR 环境变量使 Crossterm 禁用颜色，需要彩色时 unset NO_COLOR；不修改用户环境。默认 .js / .mjs 为 #FFD700，并有 .r / .cpp / .sh / .mp3 / .mp4 颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox， .md / .markdown 使用 toolkit 渲染后在 Firefox 打开，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
 
 
 Python 执行项使用 command=["python", "{path}"]、terminal=true、pause_on_exit=true。当前 TUI 终端执行结束后等待 Enter / Esc，tmux pane 留下输出与 shell 提示符。Enter 可选「Python 执行」；把 open_defaults 的 .py 改为 python 后 o 直接运行。终端程序的工作目录为选中文件所在目录（选中目录时为目录本身）；tmux 复用也应用此目录，但不修改该 pane shell 的工作目录。Python、编辑器与浏览器为外部程序，其内存不计入 TUI 的 15 MB 目标。
@@ -132,7 +132,7 @@ python scripts/measure_memory.py
 
 Konsole 当前窗口 new-window 动作停用已在本机独立终端实测；最后一个实例退出恢复原启用 / 禁用状态由隔离 DBus CLI 加两个真实 TUI 实例验证。本机 Konsole 禁用 sendText 敏感 DBus API，因此未用该接口验证真实窗口中的 Q 退出；没有更改这项设置。tmux 恢复原 extended-keys / format 已在隔离真实 server 完成验证。
 
-2026-10-13 当前 release 的项目目录 / 20000 文件 / 7200 多分支文件 / 2400 硬链接 / 7200 软链接场景峰值分别为 4.755 / 4.125 / 6.877 / 3.912 / 7.111 MB，桌面双栏场景为 8.188 MB；TTY 7200 文件单 / 双栏分别为 6.947 / 8.180 MB。八个场景均低于 15 MB。桌面使用 RGB，TTY 使用 16 色；外部解释器与浏览器不计入应用进程。详情和二进制 SHA256 见 [memory-validation.json](memory-validation.json)。源配置与本机个人配置都通过 Rust / Python 解析验证；filex Bash 函数及命令链接已安装。GUI 已移除，不再设置 GUI 内存目标。
+2026-10-15 当前 release 的项目目录 / 20000 文件 / 7200 多分支文件 / 2400 硬链接 / 7200 软链接场景峰值分别为 5.022 / 4.121 / 6.939 / 4.018 / 7.078 MB，Konsole 模式双栏场景为 8.237 MB；TTY 7200 文件单 / 双栏分别为 6.930 / 8.114 MB。八个场景均低于 15 MB。consistent 模式两边共用 16 色与同色相亮暗档；外部解释器与浏览器不计入应用进程。详情和二进制 SHA256 见 [memory-validation.json](memory-validation.json)。源配置与本机个人配置都通过 Rust / Python 解析验证；filex Bash 函数及命令链接已安装。GUI 已移除，不再设置 GUI 内存目标。
 
 ## 2026-10-12 运行修复与祖先路径高亮
 
@@ -463,7 +463,7 @@ Rust Dashboard 使用 Linux statx 的 BTIME 和文件元数据；创建时间未
 
 `[openers.NAME]` 定义 label、command 参数列表和 terminal 布尔值，`{path}` 替换完整文件路径，普通直接打开使用参数数组；复用 tmux 空闲 shell 时按上述转义规则发送命令。Enter 显示打开方式菜单，按 `[open_defaults]` 的最长扩展名后缀排序默认项；`o` 直接打开。目录菜单另有 fileX 展开 / 收起选项。TUI 的 terminal=true 程序先尝试 tmux 右侧 pane；在当前终端运行时恢复终端模式，退出后回到原树；GUI 使用 Konsole。已加入 Nano：openers.nano 的 command=["nano", "--", "{path}"]、terminal=true；Enter 菜单可选择，也可在 open_defaults 中把指定后缀映射为 nano。未安装的程序明确提示。
 
-`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 自动按能力发出 16 / 256 / RGB 颜色；KDE 现代终端保留 RGB，可在 terminal.color_mode 中覆盖；终端自身的颜色能力会影响实际显示。GUI 使用相同颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
+`[extension_colors]` 使用 #RRGGBB，大小写不敏感，支持 .tar.gz 等复合后缀。Rust TUI 默认 consistent 共用 Linux 16 色；auto 按能力发出 16 / 256 / RGB，truecolor 保留原始 RGB，可在 terminal.color_mode 中覆盖；终端自身的颜色能力会影响实际显示。GUI 使用相同颜色。默认 .py 用 VSCodium，.html / .htm 用 Firefox，其余使用系统默认程序；所有内置默认可覆盖，其他内置打开程序仍保留在菜单中。
 
 #### 文件操作边界
 
@@ -645,3 +645,37 @@ stdin / stdout 非交互、TERM=dumb 自动输出当前目录的一层静态树�
 新增 Rust 行为检查覆盖重复 Enter 的光标 / 缓存保留、两个同层目录同时展开、镜像右侧展开且另一侧分支保留；真实 TTY PTY 检查 Enter 后创建文件确实落在选中的 folder、上下跳过展开内容切换同层、w 菜单仍能打开 / 取消。
 
 Enter 行为更新后的验证：Rust 27 项 + Python 55 项全部通过（合计 82 项），Clippy 无 warning，release 已重建。八场景内存重测最大 8.188 MB，报告 SHA256 对应当前二进制。
+
+
+## 2026-10-14：TTY 登录自动启动与一致的 16 色
+
+本机原来没有 ~/.bash_profile、~/.bash_login、~/.profile；filex 函数和 ~/.local/bin 的 PATH 仅在 ~/.bashrc，因此原生 TTY 的 Bash 登录需要手动 source。scripts/install_alias.py 现在按 Bash 登录优先级维护第一个已有配置；全部不存在则创建 .bash_profile。管理区块为登录环境追加 ~/.local/bin，并仅在交互 Bash 且 filex 函数尚未加载时 source 所选 bashrc；已有配置提前加载 bashrc 时不重复执行。POSIX 外层保护使 .profile 被其他 shell 使用时不会调用 Bash 的 declare。保留其他配置、权限和软链接，写入使用临时文件 / 原子替换。
+
+默认 scripts/install.sh 同时维护命令、函数和登录入口；--command-only 或 --prefix 只维护命令。uninstall.sh 对称移除本项目区块；独立 install_alias.py --remove 同样清理登录区块，只删除由本安装器新建且移除后为空的登录文件。--rc 自定义时不改真实 home 的登录文件，--profile 可显式指定配套登录配置。实际主机已运行安装器，并确认新 login shell 可解析命令。新登录无需 source；已有 shell 的环境不能由子进程修改，需要重新登录或 exec bash -l 一次。
+
+用户选择 TTY 与 Konsole 共用 16 色。新增 terminal.color_mode="consistent"，作为 Rust / Python 配置默认和样本默认，个人配置仅改变这一项，原始扩展名 / 目录颜色保持。shared_palette 读取 /sys/module/vt/parameters/default_red、default_grn、default_blu（各 16 项、严格 u8 校验）；缺失时使用 Linux 标准默认色表。TTY 输出 ANSI 颜色槽，Konsole 输出同一槽对应的 RGB，避免用户 Konsole ANSI 主题与控制台默认色表不同。不发送 OSC palette 改写或 PIO_CMAP ioctl，不改变其他终端 / 虚拟控制台。
+
+Linux 的 SGR dim 会把色彩改为 half-bright，SGR bold 会置高亮位，因此统一模式不用 SGR dim：暗淡色先按 65% RGB 计算再量化；加粗色统一选择对应亮色槽，两边按同一结果显示。无颜色参数的 UI 文字也使用共有白色，画布使用共有黑色；正常退出恢复终端默认颜色。16 色内的精度受限，配置中的不同颜色可能合并；单独通过 OSC 设置过某个 VT 的独立色表无法由 sysfs 默认表读回，该情况下不能保证相同。auto / 16 / 256 / truecolor / none 仍可选择，NO_COLOR 保持优先；原始 RGB 输出的回归测试明确使用 truecolor。
+
+依据：Bash 本机官方手册 /usr/share/doc/bash/bash.html 的 Bash Startup Files；[Linux vt.c](https://github.com/torvalds/linux/blob/master/drivers/tty/vt/vt.c) 中的 default_red/grn/blu、intensity 和 palette 行为。新增 tests/test_login.py 以临时 HOME 和真正的 Bash login + PTY 验证 PATH / 函数自动加载、x 同 shell 目录切换、已有登录文件优先级、去重和安装 / 移除保留用户内容；新增 PTY 色彩对比解码同一目录的 TTY ANSI 与 Konsole RGB，验证文件 / .git / node_modules / 金色 JS / 软链接、反色、加粗及暗淡映射一致。未切换实际 VT 登录会话做显示硬件视觉验证。
+
+2026-10-14 验证：Rust 28 项、Python 58 项全部通过，Clippy -D warnings / fmt / diff 检查通过；release 与配置已更新并安装本机 Bash 登录入口。八场景内存最大 8.184 MB，当前报告 SHA256 对应 release；TTY 双栏 8.102 MB。
+
+
+## 2026-10-15：文件类型语义配色与跨发行版终端适配
+
+默认定义集中到 themes/terminal-16.conf，Rust include_str 嵌入，Python 历史配置从同一 TOML 读默认；fileX.example.conf 复制该默认定义。代码 / 脚本 / 数据配置 / 文档 / 图像 / 媒体 / 压缩镜像采用黄 / 绿 / 青 / 白 / 紫 / 蓝 / 红，100 多个后缀；JS / MJS #FFD700 保留。已按用户重设计请求替换个人 extension_colors 区段，保留全部目录名颜色、其他 colors、打开程序、快捷键和配置软链接。无后缀 / 未知项仍使用 file_color；分类不检测 MIME，不自动执行文件，也不因 chmod 执行位改变类别。
+
+原 consistent 调暗算法按 65% RGB 缩放后取最近槽，将亮红调暗后落入棕色，压缩包与代码碰撞。现在先求正常颜色槽，再在相同色相的亮 / 暗银行切换；白落到浅灰、浅灰落到深灰、低银行彩色保持色相。仅 consistent 更改，truecolor / auto 原有语义保留。新增 Rust 验证七类正常与暗淡均七个不同槽，保留两类终端使用同一 RGB / ANSI 映射的 PTY 对比。
+
+安装 / 移除脚本用 python3，避免 Ubuntu 不提供 /usr/bin/python。Rust Python opener 保留用户 command=[python,...]；只有 method=python 且 python 缺失、python3 可执行时才替代命令，不改参数和工作目录。Kali 的 Zsh 用同一支持 NUL 路径回传的函数；安装器 --shell auto/bash/zsh 按 SHELL / passwd 选择，--rc 自定义默认为 Bash，可用 --shell zsh 明确指定。Zsh 的 ZDOTDIR 与 .zshrc / .zprofile 维护，profile 仅补 PATH，由 Zsh 自己加载 rc，不重复 source；Bash 原有行为和管理标记保留。其他 shell 不写入 Bash 配置，提示 --command-only。
+
+Cargo.toml 声明 Rust 1.88：edition 2024 中的 let-chain 从此版本稳定。build.sh 显式检查 rustc/Cargo，旧编译器或缺失工具给出可操作提示，filex.sh 首次构建复用该检查。check-system.py 只读 /etc/os-release，分 Arch、Fedora、Debian/Ubuntu/Kali 包管理器，列编译与可选打开依赖，不执行包安装、不修改仓库。Fedora 使用 glib2，Ubuntu/Kali 的 gio 为 libglib2.0-bin；建议在目标发行版源码编译，本机动态 GNU binary 依赖 GLIBC_2.39，不能宣称该二进制在所有旧 Linux 通用。
+
+实际测试入口 scripts/distro-smoke.py 通过 Docker Hub 官方镜像的 amd64/arm64 Linux manifest 选平台、逐层 SHA256 校验、受约束的 tar 数据过滤及白出处理；绝对符号链接改为 root 内相对链接，拒绝逃出缓存根目录，跳过特殊设备。bubblewrap 创建临时用户命名空间，仅 /app 源码只读，主机 home 不绑定；工具依赖 apt/dnf 仅在隔离根安装，结束删除该测试根，镜像层保留用户缓存。apt 的 sandbox user=root 只用于 UID 单映射的隔离用户空间，避免 _apt setgroups 无法映射。未改主机 Docker 权限、用户组或系统包。Python 3.12+ / bubblewrap 仅是可选复测工具，不是应用运行依赖。
+
+scripts/distro-tty-smoke.py 在隔离 root 真实 PTY 中验证 Python3 运行及工作目录、新建 / 重命名 / 复制 / 移动 / gio 回收站、终端设置恢复；随后实际 Zsh login 的 filex 函数与 x 改变调用 shell 的目录。跨发行版报告保留镜像 manifest digest、os-release、实际二进制 SHA256 和输出，不能等同各发行版编译器 / 实机 getty / framebuffer / Wayland 视觉验证。宿主是 Arch，本测试共享宿主内核。
+
+来源：[Rust 1.88 发布说明](https://blog.rust-lang.org/2025/06/26/Rust-1.88.0/)、[Fedora GLib 包](https://packages.fedoraproject.org/pkgs/glib2/glib2/)、[Ubuntu libglib2.0-bin](https://packages.ubuntu.com/noble/libglib2.0-bin)、[Kali 与 Debian](https://www.kali.org/docs/policy/kali-linux-relationship-with-debian/)、[Kali Zsh 默认 shell](https://www.kali.org/blog/kali-linux-2020-4-release/)、[Zsh builtin read](https://zsh.sourceforge.io/Doc/Release/Shell-Builtin-Commands.html)。
+
+最终验证（2026-10-15）：29 Rust 单元 + 61 Python 核心 / CLI / PTY / shell 集成检查通过，Clippy -D warnings、fmt 与 diff 检查通过。本机新配置 / release / 安装入口已更新；八场景内存最大 8.237 MB。Ubuntu 24.04.5 LTS、Fedora 44、Kali Rolling 官方 OCI 用户空间全部通过安装、Bash/Zsh 登录、Python3 fallback、TTY 新建 / 重命名 / 复制 / 移动 / 回收站、termios 恢复、Zsh x 同 shell 目录切换。三组记录的二进制 SHA256 与当前 release 及内存报告相同。首次不可访问主机 Docker socket 后使用 rootless bubblewrap；没有 sudo 授权或改变主机 Docker 用户组。

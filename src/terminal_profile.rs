@@ -2,7 +2,8 @@
 //! or terminal reply queries are needed on a console/SSH connection.
 use crate::config::Config;
 use std::{
-    env,
+    env, fs,
+    path::Path,
     sync::{
         OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -12,6 +13,7 @@ use std::{
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Colors {
     None,
+    Consistent16,
     Ansi16,
     Ansi256,
     TrueColor,
@@ -124,6 +126,7 @@ pub fn select_colors(
         return Colors::None;
     }
     match mode {
+        "consistent" => Colors::Consistent16,
         "16" => Colors::Ansi16,
         "256" => Colors::Ansi256,
         "truecolor" => Colors::TrueColor,
@@ -133,6 +136,79 @@ pub fn select_colors(
         _ if term == "dumb" || term.is_empty() => Colors::None,
         _ => Colors::Ansi16,
     }
+}
+pub type Palette = [(u8, u8, u8); 16];
+// Linux VT's default palette, in ANSI order. Read the host defaults so vtrgb
+// customizations also match the RGB colours we emit inside Konsole.
+const LINUX_PALETTE: Palette = [
+    (0, 0, 0),
+    (170, 0, 0),
+    (0, 170, 0),
+    (170, 85, 0),
+    (0, 0, 170),
+    (170, 0, 170),
+    (0, 170, 170),
+    (170, 170, 170),
+    (85, 85, 85),
+    (255, 85, 85),
+    (85, 255, 85),
+    (255, 255, 85),
+    (85, 85, 255),
+    (255, 85, 255),
+    (85, 255, 255),
+    (255, 255, 255),
+];
+static SHARED_PALETTE: OnceLock<Palette> = OnceLock::new();
+fn read_palette(directory: &Path) -> Option<Palette> {
+    let channel = |name| -> Option<Vec<u8>> {
+        let values = fs::read_to_string(directory.join(name))
+            .ok()?
+            .trim()
+            .split(',')
+            .map(|value| value.trim().parse::<u8>().ok())
+            .collect::<Option<Vec<_>>>()?;
+        (values.len() == 16).then_some(values)
+    };
+    let (r, g, b) = (
+        channel("default_red")?,
+        channel("default_grn")?,
+        channel("default_blu")?,
+    );
+    Some(std::array::from_fn(|i| (r[i], g[i], b[i])))
+}
+pub fn shared_palette() -> &'static Palette {
+    SHARED_PALETTE.get_or_init(|| {
+        read_palette(Path::new("/sys/module/vt/parameters")).unwrap_or(LINUX_PALETTE)
+    })
+}
+pub fn shared_color(rgb: (u8, u8, u8), bold: bool, dim: bool) -> (u8, (u8, u8, u8)) {
+    let palette = shared_palette();
+    let color = rgb;
+    let mut index = palette
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != 0 || rgb == (0, 0, 0))
+        .min_by_key(|(_, p)| {
+            let d = |a: u8, b: u8| (i32::from(a) - i32::from(b)).pow(2);
+            d(color.0, p.0) + d(color.1, p.1) + d(color.2, p.2)
+        })
+        .map_or(7, |(i, _)| i as u8);
+    // Keep the hue when dimming: nearest-colour RGB scaling can turn red into
+    // brown, merging archives with code in a sixteen-colour palette.
+    if dim && !bold {
+        index = if index > 8 {
+            index - 8
+        } else if index == 7 {
+            8
+        } else {
+            index
+        };
+    }
+    // VT bold sets the intensity bit; choose that same bright bank for RGB.
+    if bold {
+        index |= 8;
+    }
+    (index, palette[index as usize])
 }
 // ASCII changes decoration only; filenames and preview text remain untouched.
 pub fn glyph(c: char) -> char {
@@ -203,6 +279,14 @@ mod tests {
     #[test]
     fn colors_follow_console_and_no_color() {
         assert_eq!(
+            select_colors("consistent", "linux", "", true, false),
+            Colors::Consistent16
+        );
+        assert_eq!(
+            select_colors("consistent", "xterm-256color", "", false, false),
+            Colors::Consistent16
+        );
+        assert_eq!(
             select_colors("auto", "linux", "truecolor", true, false),
             Colors::Ansi16
         );
@@ -220,5 +304,26 @@ mod tests {
         );
         assert_eq!(palette_index(255, 215, 0, 256), 220);
         assert_eq!(palette_index(0, 0, 128, 16), 4);
+    }
+    #[test]
+    fn shared_palette_and_styles_stay_inside_the_same_sixteen_slots() {
+        let palette = shared_palette();
+        for color in [
+            (255, 215, 0),
+            (75, 0, 130),
+            (125, 207, 255),
+            (170, 187, 204),
+        ] {
+            for (bold, dim) in [(false, false), (false, true), (true, false)] {
+                let (index, rgb) = shared_color(color, bold, dim);
+                assert_eq!(rgb, palette[index as usize]);
+                assert!(index < 16);
+                if bold {
+                    assert!(index >= 8);
+                }
+            }
+        }
+        assert_eq!(shared_color((0, 0, 0), false, false), (0, palette[0]));
+        assert_ne!(shared_color((1, 1, 1), false, true).0, 0);
     }
 }

@@ -2,13 +2,15 @@
 set -euo pipefail
 filex_root="$(dirname -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")")"
 export FILEX_INSTALL_ROOT="$filex_root"
-/usr/bin/python - "$@" <<'PY'
+python3 - "$@" <<'PY'
 import argparse
 import os
+import subprocess
+import sys
 from pathlib import Path
 parser = argparse.ArgumentParser()
 parser.add_argument('--prefix', type=Path, help='自定义安装根目录，默认 ~/.local')
-parser.add_argument('--command-only', action='store_true', help='兼容旧参数；现在始终只安装终端命令')
+parser.add_argument('--command-only', action='store_true', help='只安装命令，不改 Bash 启动配置')
 args = parser.parse_args()
 root = Path(os.environ['FILEX_INSTALL_ROOT'])
 prefix = args.prefix.expanduser().absolute() if args.prefix else Path.home() / '.local'
@@ -26,4 +28,6 @@ else:
 if desktop.exists() and '# Managed by fileX installer' in desktop.read_text() and str(root / 'filex.sh').replace('%', '%%') in desktop.read_text():
     desktop.unlink()
 print(f'已安装终端命令: {launcher}')
+if not args.prefix and not args.command_only:
+    subprocess.run([sys.executable, str(root / 'scripts/install_alias.py')], check=True)
 PY

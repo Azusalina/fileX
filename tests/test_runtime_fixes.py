@@ -21,7 +21,7 @@ class Terminal:
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 28, 150, 0, 0))
         env = {k:v for k,v in os.environ.items() if not k.startswith('KONSOLE_DBUS_') and k not in {'TMUX','TMUX_PANE','FILEX_CWD_FILE','NO_COLOR'}}
-        env.update(TERM='xterm-256color', **(extra or {}))
+        env.update({'TERM':'xterm-256color', **(extra or {})})
         self.process = subprocess.Popen(command, cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave)
         os.close(slave)
         self.output = bytearray()

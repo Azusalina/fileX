@@ -353,7 +353,7 @@ pub fn open_command(path: &Path, conf: &Config, method: &str) -> Result<(Command
     let opener = conf.openers.get(method).ok_or("打开程序未定义")?;
     let root = product_root();
     let toolkit = root.parent().unwrap_or(&root).join("toolkit");
-    let args = opener
+    let mut args = opener
         .command
         .iter()
         .map(|s| {
@@ -362,6 +362,10 @@ pub fn open_command(path: &Path, conf: &Config, method: &str) -> Result<(Command
                 .replace("{path}", &path.to_string_lossy())
         })
         .collect::<Vec<_>>();
+    // Ubuntu/Fedora commonly install python3 without a python compatibility link.
+    if method == "python" && args[0] == "python" && !available("python") && available("python3") {
+        args[0] = "python3".into();
+    }
     if !available(&args[0]) {
         return Err(format!("程序未安装: {}", args[0]));
     }

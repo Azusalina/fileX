@@ -5,6 +5,8 @@ import re
 import tomllib
 
 
+_THEME = tomllib.loads((Path(__file__).resolve().parents[1]/"themes/terminal-16.conf").read_text())
+
 DEFAULT_KEYS = {
     "quit": "Q", "exit_here": "x", "dashboard": "q", "dashboard_narrow": "[", "dashboard_widen": "]", "link_info": "I", "expand": "l", "collapse": "h", "down": "j", "up": "k",
     "expand_all": "E", "collapse_all": "C", "open": "o", "open_with": "w",
@@ -78,7 +80,7 @@ class Config:
     konsole_shortcuts: bool = True
     tmux_extended_keys: bool = True
     mode: str = "auto"
-    color_mode: str = "auto"
+    color_mode: str = "consistent"
     charset: str = "auto"
     cli_opener: str = "auto"
     scan_limit: int = 10000
@@ -91,17 +93,17 @@ class Config:
     max_expand_nodes: int = 5000
     background: str = "#111820"
     foreground: str = "#d9e3ee"
-    folder_color: str = "#7dcfff"
-    folder_colors: dict = field(default_factory=lambda: {".git": "#c678dd", "node_modules": "#98c379", "__pycache__": "#e5c07b", "pycache": "#e5c07b"})
-    file_color: str = "#c8d3df"
+    folder_color: str = _THEME["colors"]["folder_color"]
+    folder_colors: dict = field(default_factory=lambda: _THEME["folder_colors"].copy())
+    file_color: str = _THEME["colors"]["file_color"]
     selected_color: str = "#304962"
-    line_color: str = "#526779"
-    link_color: str = "#4B0082"
-    path_color: str = "#9cc5d1"
+    line_color: str = _THEME["colors"]["line_color"]
+    link_color: str = _THEME["colors"]["link_color"]
+    path_color: str = _THEME["colors"]["path_color"]
     keys: dict = field(default_factory=lambda: DEFAULT_KEYS.copy())
     openers: dict = field(default_factory=lambda: {k: {**v, "command": v["command"].copy()} for k, v in DEFAULT_OPENERS.items()})
     open_defaults: dict = field(default_factory=lambda: { ".py": "vscodium", ".html": "firefox", ".htm": "firefox", ".md": "markdown", ".markdown": "markdown", "*": "system"})
-    extension_colors: dict = field(default_factory=lambda: {".js": "#FFD700", ".mjs": "#FFD700", ".py": "#e5c07b", ".html": "#e06c75", ".png": "#c792ea", ".jpg": "#c792ea", ".md": "#98c379", ".r": "#61afef", ".cpp": "#56b6c2", ".sh": "#98c379", ".mp3": "#c792ea", ".mp4": "#e06c75"})
+    extension_colors: dict = field(default_factory=lambda: _THEME["extension_colors"].copy())
 
 
 def dashboard_columns(config, terminal_width):
@@ -167,7 +169,7 @@ def load_config(path=None):
                 if not re.fullmatch(color_pattern, value):
                     raise ValueError(f"{key}: 应为 #RRGGBB")
             setattr(conf, key, value)
-    for key, choices in {"mode": {"auto", "tty"}, "color_mode": {"auto", "16", "256", "truecolor", "none"}, "charset": {"auto", "ascii", "unicode"}}.items():
+    for key, choices in {"mode": {"auto", "tty"}, "color_mode": {"consistent", "auto", "16", "256", "truecolor", "none"}, "charset": {"auto", "ascii", "unicode"}}.items():
         if getattr(conf, key) not in choices:
             raise ValueError(f"{key}: invalid terminal option")
     if conf.sort not in {"name", "size", "modified"}:

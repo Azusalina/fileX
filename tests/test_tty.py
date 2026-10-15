@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import shlex
 import shutil
@@ -186,6 +187,55 @@ class TtyTests(unittest.TestCase):
                 conf.write_text('[terminal]\n'+key+'='+json.dumps(value)+'\n')
                 result=subprocess.run([str(BINARY),str(base),'--config',str(conf)],capture_output=True,env=headless_env())
                 self.assertEqual(result.returncode,1)
+
+    def test_shared_sixteen_colors_match_console_and_konsole_rgb(self):
+        channels=[]
+        for name in ('default_red','default_grn','default_blu'):
+            channels.append([int(v) for v in (Path('/sys/module/vt/parameters')/name).read_text().strip().split(',')])
+        palette=list(zip(*channels))
+        def rendered_colors(output, native):
+            colors={};fg=palette[15];index=15;bold=False;reverse=False
+            previous=0
+            for match in re.finditer(rb'\x1b\[([0-9;?<>]*)([@-~])',output):
+                segment=output[previous:match.start()].decode(errors='replace')
+                if segment.startswith(('. ','· ','> ','▸ ','v ','▾ ','------')):
+                    for name in ('node_modules','.git','gold.js','a.js','b.txt'):
+                        if name in segment:
+                            colors[name]=(palette[index|8] if native and bold else fg,reverse,bold)
+                previous=match.end()
+                if match.group(2)!=b'm' or not re.fullmatch(rb'[0-9;]*',match.group(1)):continue
+                codes=[int(v or b'0') for v in match.group(1).split(b';')];i=0
+                while i<len(codes):
+                    code=codes[i]
+                    if code==0:fg=palette[15];index=15;bold=False;reverse=False
+                    elif code==1:bold=True
+                    elif code==7:reverse=True
+                    elif 30<=code<=37:index=code-30;fg=palette[index]
+                    elif 90<=code<=97:index=code-90+8;fg=palette[index]
+                    elif code in (38,48) and codes[i+1]==2:
+                        if code==38:fg=tuple(codes[i+2:i+5])
+                        i+=4
+                    i+=1
+            return colors
+        with tempfile.TemporaryDirectory() as d:
+            base=Path(d);root=base/'files';root.mkdir()
+            (root/'node_modules').mkdir();(root/'.git').mkdir();(root/'gold.js').touch();(root/'b.txt').touch();(root/'a.js').symlink_to('b.txt')
+            conf=base/'settings.conf';conf.write_text('[terminal]\ncolor_mode="consistent"\n[input_method]\nauto_english=false\n[browser]\nshow_hidden=true\n')
+            terminals=[]
+            try:
+                for extra in ({}, {'TERM':'xterm-256color','DISPLAY':':fake'}):
+                    terminal=Console(root,conf,extra=extra);terminals.append(terminal)
+                    terminal.until(lambda:b'gold.js' in terminal.output)
+                    terminal.send('\x1b[C')
+                native=rendered_colors(terminals[0].output,True);desktop=rendered_colors(terminals[1].output,False)
+                self.assertEqual(native,desktop)
+                self.assertEqual(set(native),{'node_modules','.git','gold.js','a.js','b.txt'})
+                self.assertNotIn(b'\x1b[2m',terminals[0].output)
+                self.assertNotIn(b'\x1b[2m',terminals[1].output)
+                self.assertNotIn(b'\x1b]P',terminals[0].output)
+                for terminal in terminals:terminal.finish()
+            finally:
+                for terminal in terminals:terminal.close()
 
     def test_enter_expands_folder_keeps_cursor_and_w_opens_menu(self):
         with tempfile.TemporaryDirectory() as d:

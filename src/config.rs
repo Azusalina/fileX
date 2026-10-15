@@ -108,6 +108,22 @@ pub fn key_code(value: &str) -> String {
 }
 impl Default for Config {
     fn default() -> Self {
+        let theme: Value = toml::from_str(include_str!("../themes/terminal-16.conf"))
+            .expect("valid embedded terminal theme");
+        let theme_map = |section: &str| -> BTreeMap<String, String> {
+            theme[section]
+                .as_table()
+                .expect("theme table")
+                .iter()
+                .map(|(key, value)| (key.clone(), value.as_str().expect("theme color").to_owned()))
+                .collect()
+        };
+        let theme_color = |key: &str| {
+            theme["colors"][key]
+                .as_str()
+                .expect("theme color")
+                .to_owned()
+        };
         let keys = [
             ("quit", "Q"),
             ("exit_here", "x"),
@@ -209,7 +225,7 @@ impl Default for Config {
             konsole_shortcuts: true,
             tmux_extended_keys: true,
             terminal_mode: "auto".into(),
-            color_mode: "auto".into(),
+            color_mode: "consistent".into(),
             charset: "auto".into(),
             cli_opener: "auto".into(),
             link_scan_limit: 10000,
@@ -219,20 +235,12 @@ impl Default for Config {
             dashboard_width: 36,
             search_results: 500,
             search_limit: 100000,
-            folder_color: "#7dcfff".into(),
-            folder_colors: [
-                ("node_modules", "#98c379"),
-                (".git", "#c678dd"),
-                ("__pycache__", "#e5c07b"),
-                ("pycache", "#e5c07b"),
-            ]
-            .into_iter()
-            .map(|(name, color)| (name.into(), color.into()))
-            .collect(),
-            file_color: "#c8d3df".into(),
-            line_color: "#526779".into(),
-            link_color: "#4B0082".into(),
-            path_color: "#9cc5d1".into(),
+            folder_color: theme_color("folder_color"),
+            folder_colors: theme_map("folder_colors"),
+            file_color: theme_color("file_color"),
+            line_color: theme_color("line_color"),
+            link_color: theme_color("link_color"),
+            path_color: theme_color("path_color"),
             keys,
             openers,
             defaults: [
@@ -246,23 +254,7 @@ impl Default for Config {
             .into_iter()
             .map(|(a, b)| (a.into(), b.into()))
             .collect(),
-            extension_colors: [
-                (".js", "#FFD700"),
-                (".mjs", "#FFD700"),
-                (".py", "#e5c07b"),
-                (".html", "#e06c75"),
-                (".png", "#c792ea"),
-                (".jpg", "#c792ea"),
-                (".md", "#98c379"),
-                (".r", "#61afef"),
-                (".cpp", "#56b6c2"),
-                (".sh", "#98c379"),
-                (".mp3", "#c792ea"),
-                (".mp4", "#e06c75"),
-            ]
-            .into_iter()
-            .map(|(a, b)| (a.into(), b.into()))
-            .collect(),
+            extension_colors: theme_map("extension_colors"),
         }
     }
 }
@@ -400,8 +392,11 @@ impl Config {
                         conf.terminal_mode = choice(value, key, &["auto", "tty"])?
                     }
                     ("terminal", "color_mode") => {
-                        conf.color_mode =
-                            choice(value, key, &["auto", "16", "256", "truecolor", "none"])?
+                        conf.color_mode = choice(
+                            value,
+                            key,
+                            &["consistent", "auto", "16", "256", "truecolor", "none"],
+                        )?
                     }
                     ("terminal", "charset") => {
                         conf.charset = choice(value, key, &["auto", "ascii", "unicode"])?

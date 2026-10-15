@@ -91,7 +91,7 @@ class NavigationFeatures(unittest.TestCase):
         self.browser.find_next("needle")
         node, conf = self.browser.selected, self.browser.config
         self.assertEqual(default_opener(node, conf), "vscodium")
-        self.assertEqual(display_color(node, conf), "#e5c07b")
+        self.assertEqual(display_color(node, conf), "#FFD700")
         conf.openers["test"] = {"label": "Test", "command": ["test-editor", "--file={path}"], "terminal": True}
         path = self.root / "weird ; $(command) file.py"
         with patch("filex.opening.shutil.which", return_value="/bin/true"):

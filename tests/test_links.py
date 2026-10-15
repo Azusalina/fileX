@@ -92,7 +92,7 @@ class LinkTests(unittest.TestCase):
             self.assertEqual(item.label, "· a.js------b.txt")
             self.assertEqual(item.label[item.link_start:], "------b.txt")
             config = root / ".settings.conf"
-            config.write_text('[input_method]\nauto_english=false\n[folder_colors]\nnode_modules="#112233"\n".git"="#aabbcc"\n')
+            config.write_text('[terminal]\ncolor_mode="truecolor"\n[input_method]\nauto_english=false\n[folder_colors]\nnode_modules="#112233"\n".git"="#aabbcc"\n')
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 120, 0, 0))
             env = {k:v for k,v in os.environ.items() if not k.startswith("KONSOLE_DBUS_") and k not in {"TMUX", "TMUX_PANE", "NO_COLOR"}}

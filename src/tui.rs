@@ -12,7 +12,9 @@ use crossterm::{
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute, queue,
-    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
+    style::{
+        Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
+    },
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use std::{
@@ -157,6 +159,49 @@ fn rgb(value: &str) -> Color {
         b: u8::from_str_radix(&value[5..7], 16).unwrap_or(200),
     }
 }
+fn ansi_foreground(index: u8) -> String {
+    format!(
+        "\x1b[{}m",
+        if index < 8 {
+            30 + index
+        } else {
+            90 + index - 8
+        }
+    )
+}
+fn consistent_foreground(
+    out: &mut impl Write,
+    rgb: (u8, u8, u8),
+    bold: bool,
+    dim: bool,
+) -> Result<(), String> {
+    let (index, (r, g, b)) = terminal_profile::shared_color(rgb, bold, dim);
+    if terminal_profile::get().console {
+        queue!(out, Print(ansi_foreground(index))).map_err(ioerr)
+    } else {
+        queue!(out, SetForegroundColor(Color::Rgb { r, g, b })).map_err(ioerr)
+    }
+}
+fn consistent_background(out: &mut impl Write) -> Result<(), String> {
+    if terminal_profile::get().console {
+        queue!(out, Print("\x1b[40m")).map_err(ioerr)
+    } else {
+        let (r, g, b) = terminal_profile::shared_palette()[0];
+        queue!(out, SetBackgroundColor(Color::Rgb { r, g, b })).map_err(ioerr)
+    }
+}
+fn default_style(out: &mut impl Write) -> Result<(), String> {
+    queue!(out, SetAttribute(Attribute::Reset), ResetColor).map_err(ioerr)?;
+    if terminal_profile::get().colors == Colors::Consistent16 {
+        consistent_background(out)?;
+        consistent_foreground(out, terminal_profile::shared_palette()[15], false, false)?;
+    }
+    Ok(())
+}
+fn clear_screen(out: &mut impl Write) -> Result<(), String> {
+    default_style(out)?;
+    queue!(out, Clear(ClearType::All)).map_err(ioerr)
+}
 fn put(
     out: &mut impl Write,
     y: usize,
@@ -196,7 +241,11 @@ fn put_styled(
         SetAttribute(Attribute::Reset)
     )
     .map_err(ioerr)?;
-    if dim {
+    let consistent = terminal_profile::get().colors == Colors::Consistent16;
+    if consistent {
+        consistent_background(out)?;
+    }
+    if dim && !consistent {
         queue!(out, SetAttribute(Attribute::Dim)).map_err(ioerr)?;
     }
     if let Some(color) = color {
@@ -205,6 +254,7 @@ fn put_styled(
         };
         match terminal_profile::get().colors {
             Colors::None => {}
+            Colors::Consistent16 => consistent_foreground(out, (r, g, b), bold, dim)?,
             Colors::TrueColor => {
                 queue!(out, SetForegroundColor(Color::Rgb { r, g, b })).map_err(ioerr)?
             }
@@ -231,6 +281,8 @@ fn put_styled(
                 .map_err(ioerr)?;
             }
         }
+    } else if consistent {
+        consistent_foreground(out, terminal_profile::shared_palette()[15], bold, dim)?;
     } else {
         queue!(out, ResetColor).map_err(ioerr)?
     }
@@ -538,7 +590,7 @@ impl Ui {
         let (w, h) = terminal::size().map_err(ioerr)?;
         let (w, h) = (w as usize, h as usize);
         let mut out = io::stdout().lock();
-        queue!(out, Clear(ClearType::All)).map_err(ioerr)?;
+        clear_screen(&mut out)?;
         if w < if self.other.is_some() { 75 } else { 36 } || h < 8 {
             put(
                 &mut out,
@@ -757,13 +809,12 @@ impl Ui {
                 value.drain(..c.len_utf8());
             }
             let mut out = io::stdout().lock();
+            default_style(&mut out)?;
             queue!(
                 out,
                 MoveTo(0, h - 2),
                 Clear(ClearType::CurrentLine),
                 Show,
-                SetAttribute(Attribute::Reset),
-                ResetColor,
                 Print(&value)
             )
             .map_err(ioerr)?;
@@ -801,7 +852,7 @@ impl Ui {
             let (w, h) = (w as usize, h as usize);
             let body = h.saturating_sub(3).max(1);
             let mut out = io::stdout().lock();
-            queue!(out, Clear(ClearType::All)).map_err(ioerr)?;
+            clear_screen(&mut out)?;
             put(&mut out, 0, 1, title, w, None, false)?;
             for (i, line) in rows.iter().skip(top).take(body).enumerate() {
                 put(&mut out, i + 1, 1 - left as isize, line, w, None, false)?
@@ -844,7 +895,7 @@ impl Ui {
             let body = h.saturating_sub(4).max(1);
             let first = selected.saturating_sub(body - 1);
             let mut out = io::stdout().lock();
-            queue!(out, Clear(ClearType::All)).map_err(ioerr)?;
+            clear_screen(&mut out)?;
             put(&mut out, 0, 1, title, w, None, false)?;
             for (i, (_, label)) in options.iter().enumerate().skip(first).take(body) {
                 put(
@@ -1076,6 +1127,7 @@ impl Ui {
             self.draw()?;
             let (width, height) = terminal::size().map_err(ioerr)?;
             let mut out = io::stdout().lock();
+            default_style(&mut out)?;
             queue!(
                 out,
                 MoveTo(0, height.saturating_sub(2)),

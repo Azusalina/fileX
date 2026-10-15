@@ -10,6 +10,33 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 struct Fixture(PathBuf);
+#[test]
+fn semantic_theme_is_distinct_in_shared_sixteen_color_mode() {
+    let conf = Config::default();
+    let samples = [
+        "main.PY",
+        "run.sh",
+        "settings.toml",
+        "readme.md",
+        "photo.webp",
+        "video.mkv",
+        "backup.tar.gz",
+    ];
+    let mut normal = std::collections::HashSet::new();
+    let mut subdued = std::collections::HashSet::new();
+    for name in samples {
+        let color = conf
+            .rule(std::path::Path::new(name), &conf.extension_colors, false)
+            .unwrap();
+        let part = |start| u8::from_str_radix(&color[start..start + 2], 16).unwrap();
+        let rgb = (part(1), part(3), part(5));
+        normal.insert(crate::terminal_profile::shared_color(rgb, false, false).0);
+        subdued.insert(crate::terminal_profile::shared_color(rgb, false, true).0);
+    }
+    assert_eq!(normal.len(), samples.len());
+    assert_eq!(subdued.len(), samples.len());
+    assert!(conf.extension_colors.len() >= 100);
+}
 impl Fixture {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(

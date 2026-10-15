@@ -93,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix="filex-memory-") as directory:
     anchor.write_text("const test = 1;\nconsole.log(test);\n")
     for i in range(2400):
         os.link(anchor, linked / f"hard{i:04d}.mjs")
-    report = {"version": "1.5.0", "binary_sha256": hashlib.sha256((ROOT / "target/release/filex").read_bytes()).hexdigest(), "date": time.strftime("%Y-%m-%d"), "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications", "settings": {"max_entries": 1000, "max_loaded_nodes_per_pane": 6000, "max_expand_nodes": 5000}, "scenarios": {
+    report = {"version": "1.5.0", "binary_sha256": hashlib.sha256((ROOT / "target/release/filex").read_bytes()).hexdigest(), "date": time.strftime("%Y-%m-%d"), "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications", "settings": {"color_mode": "consistent", "max_entries": 1000, "max_loaded_nodes_per_pane": 6000, "max_expand_nodes": 5000}, "scenarios": {
         "tty_branches_7200_files": measure(branches, ["E", "q", "\x06needle_B059_I119\r", "k", "j", "y", "\x12"], tty=True),
         "tty_dual_branches_7200_files": measure(branches, ["v", "E", "\t", "E", "q", "\x06needle_B059_I119\r", "\t", "y", "v", "\x12"], tty=True),
         "dual_branches_7200_files": measure(branches, ["v", "E", "\t", "E", "q", "\x06needle_B059_I119\r", "k", "j", "\t", "\x06needle_B059_I119\r", "q", "\t", "v", "\x12"]),

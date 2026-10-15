@@ -1,12 +1,12 @@
 ## What is it?
 
-filex 1.5 是面向 Arch Linux、Linux TTY、SSH 和 KDE Wayland 终端的横向树文件管理器。默认 TUI 已用 Rust 重构，母子目录和文件由线连接，支持多分支展开、搜索定位、文件信息和常用文件操作，可切换同一界面的中轴镜像双目录树。当前版本仅提供 Rust TUI。
+filex 1.5 是面向 Arch、Fedora、Ubuntu、Kali 的 Linux TTY、SSH 和 Konsole 终端的横向树文件管理器。默认 TUI 已用 Rust 重构，母子目录和文件由线连接，支持多分支展开、搜索定位、文件信息和常用文件操作，可切换同一界面的中轴镜像双目录树。当前版本仅提供 Rust TUI。
 
 配置、架构、内存测量、限制和历史记录见 [description.md](description.md)。
 
 ## How to use
 
-本机已经编译好 TUI，并安装 `filex` Bash 函数（替代原 alias）和 `~/.local/bin/filex` 命令，可在 tmux 内使用，无须每次手动加载 shell 配置：
+本机已经编译好 TUI，并安装 `filex` Bash / Zsh 函数（替代原 alias）和 `~/.local/bin/filex` 命令，可在 tmux 内使用，无须每次手动加载 shell 配置：
 
 ```bash
 filex               # 以当前工作目录为根，启动 Rust TUI
@@ -17,12 +17,16 @@ filex | less        # 非交互输出自动打印当前目录的一层树
 filex --print-tree --ascii > tree.txt
 ```
 
-也可直接运行 `./filex.sh`，无须 shell 函数。首次编译需要 Rust / Cargo；已有 release 二进制可直接运行，浏览、搜索、新建、重命名、复制、移动和预览不需要 Python、GUI、Wayland 或桌面服务。回收站需要 glib2 的 `gio`；终端编辑器可选 Nano / Neovim / Vim：
+也可直接运行 `./filex.sh`，无须 shell 函数。首次编译需要 Rust / Cargo 1.88+ 和 C 链接器；已有 release 二进制可直接运行，浏览、搜索、新建、重命名、复制、移动和预览不需要 Python、GUI、Wayland 或桌面服务。回收站需要 glib2 的 `gio`；终端编辑器可选 Nano / Neovim / Vim：
 
 ```bash
-sudo pacman -S rust glib2 nano
+sudo pacman -S --needed base-devel rust python glib2 nano
 ./scripts/build.sh          # 构建 / 更新 release TUI
 ```
+
+Fedora：`sudo dnf install gcc glibc-devel rust cargo python3 glib2 nano`；Ubuntu / Kali：`sudo apt update && sudo apt install build-essential python3 libglib2.0-bin nano curl`，再准备 Rust / Cargo 1.88+。发行版 Rust 太旧时使用 [官方 rustup](https://rustup.rs/) 安装新版；`python3 scripts/check-system.py` 会显示本机版本、依赖和对应安装命令，不自动改系统。Kali 属于 Debian 系，使用 apt，与 Fedora 的 dnf 分开处理。[Kali 官方说明](https://www.kali.org/docs/policy/kali-linux-relationship-with-debian/)。
+
+在目标发行版执行 `./scripts/build.sh`，再 `./scripts/install.sh`。不要把较新 glibc 的 Arch 二进制直接复制给旧发行版；当前本机构建需要 glibc 2.39+，旧系统应源码重建。已有兼容二进制运行时不需要 Rust。
 
 仅在桌面会话中按需安装 `xdg-utils`、`wl-clipboard`、`fcitx5`、`qt6-tools` 及打开程序；这些不是纯 CLI / TTY 浏览的前提。
 启动脚本在缺少 release 程序时自动编译。VSCodium、Vim、Neovim、Nano、Firefox、Rscript（Arch 的 r 包）、Bash 是可选打开程序，使用前需已安装。
@@ -58,7 +62,7 @@ sudo pacman -S rust glib2 nano
 
 `H/L` 横移，PgUp/PgDn 同层级循环翻页，Home/End 选择首末节点；输入时 Enter 确认、Esc 取消、Ctrl+U 清空、Ctrl+V 粘贴 filex 内部路径缓冲。单栏复制 / 移动填写**完整目标路径，包含目标名称**；相对路径以源项目的父目录为基准，不覆盖已有目标，目标父目录必须存在。文件树不自动遍历符号链接。
 
-Linux 原生控制台（`TERM=linux` 或识别到真实 VT）自动使用 16 色、ASCII 连线及英文控制提示；SSH / 无桌面会话也默认 ASCII 提示，按终端能力使用 16 / 256 色或真彩色。桌面保留中文提示与现代终端协议。TTY 中推荐 `a` / `A` 新建文件 / 文件夹、`y` 保存路径、`Ctrl+R` 刷新：传统终端通常无法区分 `Ctrl+Shift+N` 与 `Ctrl+N`。方向键、`v` / `Tab` 双栏、`c` / `m`、搜索、回收站及 `x` 均可使用；复制路径缓冲仅在当前 filex 进程内，退出即释放。
+Linux 原生控制台（`TERM=linux` 或识别到真实 VT）自动使用 16 色、ASCII 连线及英文控制提示；SSH / 无桌面会话也默认 ASCII 提示。默认颜色模式 `consistent` 把两边配置颜色映射到同一套 Linux 16 色；Konsole 直接显示这些颜色的 RGB，不使用主题中的 ANSI 色表。桌面保留中文提示与现代终端协议。TTY 中推荐 `a` / `A` 新建文件 / 文件夹、`y` 保存路径、`Ctrl+R` 刷新：传统终端通常无法区分 `Ctrl+Shift+N` 与 `Ctrl+N`。方向键、`v` / `Tab` 双栏、`c` / `m`、搜索、回收站及 `x` 均可使用；复制路径缓冲仅在当前 filex 进程内，退出即释放。
 
 无桌面时 `o` 自动将桌面默认打开方式替换为 Nano → Neovim → Vim（按安装情况），都没有则用内置预览；`w`（普通文件上也可 Enter）的打开菜单只列终端打开程序。可用 `terminal.cli_opener` 指定其他 `terminal=true` 程序。Python / Rscript / Bash 仍需明确选择或配置为默认，不会因后缀自动执行。Markdown 在 CLI 中交给编辑器 / 内置文本预览；在桌面仍使用 Toolkit / Firefox。`TERM=dumb`、输入或输出重定向时直接打印一层树；无需伪造桌面环境变量。
 
@@ -72,7 +76,7 @@ Enter 在 folder 上直接展开子树，保留其他已展开分支；子级仍
 
 `x` 通过 Bash 函数启动时直接改变调用 shell 的目录。直接运行命令链接、二进制或 `./filex.sh` 时，退出 TUI 后在选中目录进入交互式 `$SHELL`；Bash 自动读取 `.bashrc`，之后的 `filex` 调用使用函数。直接启动的这一层 shell 用 `exit` 返回原 shell。普通 `Q` 退出保留原目录。
 
-桌面会话的 TUI 启动及重新获得焦点时自动使用 Fcitx5 英文键盘，退出后恢复启动前的输入法；可在 `[input_method]` 设置 `auto_english=false`。`Enter` 选择 Python / Rscript / Bash 执行，分别运行 `python 文件绝对路径`、`Rscript 文件绝对路径`、`bash -- 文件绝对路径`，工作目录为脚本所在目录；当前终端执行结束后按 Enter 返回；也可把 `.py` / `.r` / `.sh` 默认方式改为 `python` / `rscript` / `bash`。Python、编辑器、Node 和浏览器是外部程序。
+桌面会话的 TUI 启动及重新获得焦点时自动使用 Fcitx5 英文键盘，退出后恢复启动前的输入法；可在 `[input_method]` 设置 `auto_english=false`。`Enter` 选择 Python / Rscript / Bash 执行，分别运行 `python 文件绝对路径`、`Rscript 文件绝对路径`、`bash -- 文件绝对路径`，工作目录为脚本所在目录；当前终端执行结束后按 Enter 返回；也可把 `.py` / `.r` / `.sh` 默认方式改为 `python` / `rscript` / `bash`。Python、编辑器、Node 和浏览器是外部程序。没有 `python` 命令但存在 `python3` 时，Python 执行项自动使用 `python3`。
 
 `.md` / `.markdown` 默认先复制绝对路径，再用相邻 [toolkit](../toolkit/README.md) 渲染并在 Firefox 新标签页打开，保存后自动更新。状态栏显示预览就绪 URL，启动失败会显示原因。需要 Node.js 22+、Firefox，以及在 toolkit 目录完成 `npm install`；本机已具备。预览使用随机本地端口，每个文件独立，不占用 toolkit 原有的 4177 端口。没有预览连接且无请求 30 分钟后自动关闭对应渲染进程。Markdown 默认打开项可在配置中覆盖，`command` 内的 `{toolkit}` 可改为其他 toolkit 的绝对目录。`.js`、`.mjs` 默认金色 `#FFD700`；`.r`、`.cpp`、`.sh`、`.mp3`、`.mp4` 也有默认颜色，大小写不敏感。
 
@@ -83,7 +87,7 @@ Enter 在 folder 上直接展开子树，保留其他已展开分支；子级仍
 ```toml
 [terminal]
 mode = "auto"       # auto / tty；--tty 也可强制
-color_mode = "auto" # auto / 16 / 256 / truecolor / none；NO_COLOR 优先
+color_mode = "consistent" # 两边统一 16 色；也可 auto / 16 / 256 / truecolor / none；NO_COLOR 优先
 charset = "auto"    # auto / ascii / unicode
 cli_opener = "auto" # 或 nano / vim / nvim / 自定义 terminal=true 的 opener
 
@@ -137,11 +141,11 @@ preview_lines = 5 # q / I 的文件开头行数；0 关闭
 安装 / 移除 Bash 入口和终端命令：
 
 ```bash
-python scripts/install_alias.py          # Bash 函数，已在本机完成
-./scripts/install.sh --command-only      # 只安装命令，已在本机完成
-./scripts/install.sh                     # 安装终端命令
-./scripts/uninstall.sh                   # 移除终端命令
-python scripts/install_alias.py --remove # 移除本项目的 Bash 配置区块
+python3 scripts/install_alias.py          # Bash 函数及 TTY 登录加载入口，已在本机完成
+./scripts/install.sh --command-only      # 只安装命令，不修改 shell 配置
+./scripts/install.sh                     # 安装命令、Bash/Zsh 函数及 TTY 登录入口
+./scripts/uninstall.sh                   # 移除命令及本项目 Bash 启动区块
+python3 scripts/install_alias.py --remove # 只移除 Bash 函数及登录配置区块
 unset -f filex                          # 同时卸载当前 shell 已加载的函数
 ```
 
@@ -150,3 +154,25 @@ tmux 当前 pane 中直接运行 `filex`，根目录为该 pane 的当前目录�
 保留源码目录，移动后重新安装入口。卸载保留配置和用户文件。默认文件管理器保持原设置。
 
 `[terminal]` 的模式、颜色和字符集在启动时决定，修改后重新启动；其他现有配置仍可用 `,` 重载。TTY 模式不调用 Fcitx / Konsole，也不改 tmux 扩展键和焦点设置。正常退出、Ctrl+C、SIGTERM / SIGHUP 恢复终端设置。原生控制台字体仍限制文件名字符显示，ASCII 模式不转写中文文件名。
+
+TTY 登录的 Bash 自动读取已有的第一个 `.bash_profile` / `.bash_login` / `.profile`；安装器在其中追加本项目管理区块，交互登录自动加载 `.bashrc`（函数已加载则跳过），同时补上 `~/.local/bin`。没有登录配置时创建 `.bash_profile`。本机已安装；新登录直接运行 `filex`，已经打开的 TTY 可重新登录或运行一次 `exec bash -l`，之后不需要 `source ~/.bashrc`。自定义 `--prefix` 或 `--command-only` 不修改个人 shell；`install_alias.py --rc PATH --profile PATH` 可管理其他 Bash 配置。
+
+颜色默认使用 `[terminal] color_mode="consistent"`：读取 Linux VT 的 16 色默认表，配置颜色取最近颜色；暗淡分支和加粗链接也映射到同一表。只控制 filex 自身输出，不改变 Konsole 主题或系统 / VT 调色板。自定义原始 `#RRGGBB` 配置保留，超过 16 种颜色会合并为近似色；若改回 `auto`，两类终端恢复各自能力的颜色模式。已单独用 OSC 自定义过某个 VT 的色表可能仍与系统默认表不同。修改颜色模式后重启 filex 生效。
+
+新默认文件类型配色覆盖 100 多个后缀，并保持同色相的亮 / 暗两档，收起其他分支时不会丢掉类别区别：
+
+| 类别 | 颜色 | 例子 |
+|---|---|---|
+| 代码 | 黄（JS / MJS 仍为 `#FFD700`） | py、r、rs、cpp、js、ts、go |
+| Shell / 启动程序 | 绿 | sh、bash、zsh、fish、AppImage |
+| 配置 / 数据 / 标记 | 青 | json、toml、conf、yaml、csv、html、css |
+| 文本 / 文档 | 白 | txt、md、pdf、docx、epub |
+| 图像 | 紫 | png、jpg、webp、svg |
+| 音频 / 视频 | 蓝 | mp3、mp4、flac、mkv |
+| 压缩包 / 镜像 / 安装包 | 红 | tar.gz、zip、7z、iso、deb、rpm |
+
+其他文件灰色；分类按后缀，不自动执行程序。默认定义见 [themes/terminal-16.conf](themes/terminal-16.conf)，Rust 在构建时嵌入；修改自己的 `[extension_colors]` 后按 `,` 重载即可。此次已更新本机文件后缀配色，保留目录名颜色、打开规则及其他自定义设置。
+
+安装器自动识别 Bash / Zsh；可 `python3 scripts/install_alias.py --shell zsh` 显式选择。Zsh 维护 `.zshrc` / `.zprofile` 并遵循 `ZDOTDIR`，交互登录只加载一次 `.zshrc`；Bash 的现有加载方式保留。其他 shell 可用 `--command-only`，`x` 使用已说明的独立 shell 退回方式。
+
+跨发行版复测：有 bubblewrap 和 Python 3.12+ 时运行 `python3 scripts/distro-smoke.py --install-tools`。它下载 Ubuntu / Fedora / Kali 官方 OCI 镜像，在用户缓存中的隔离根目录安装测试依赖，不修改主机软件包或登录文件；核对安装、Python3、TTY 文件操作和 Zsh `x`。结果写入 [distro-validation.json](distro-validation.json)。这些是共享主机内核的用户空间 / PTY 检查，不代替实机 VT 或完整发行版启动验证。
