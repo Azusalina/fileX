@@ -104,9 +104,10 @@ class TtyTests(unittest.TestCase):
             terminal.until(lambda: (root/'new.txt').exists() and (root/'new-folder').is_dir())
             terminal.send('/seed.txt\rR\x15renamed.txt\r')
             terminal.until(lambda: (root/'renamed.txt').exists())
-            terminal.send('yc\x15\x16.copy\r')
-            terminal.until(lambda: (root/'renamed.txt.copy').exists())
-            self.assertEqual((root/'renamed.txt.copy').read_text(), 'payload')
+            terminal.send('ycg\x15\x16' + '\x7f' * len('renamed.txt') + 'new-folder\r\r')
+            terminal.until(lambda: (root/'new-folder/renamed.txt').exists())
+            self.assertEqual((root/'new-folder/renamed.txt').read_text(), 'payload')
+            terminal.send('g\x15'+str(root)+'\r')
             # Linux console F5 uses ESC [ [ E, not the xterm ESC [ 15 ~ sequence.
             (root/'external.txt').touch(); terminal.send('\x1b[[E')
             terminal.until(lambda: b'external.txt' in terminal.output)
@@ -161,8 +162,8 @@ class TtyTests(unittest.TestCase):
             # Right side arrows are mirrored. Enter dest then expand it and return to dest.
             terminal.send('\x1b[D\x1b[D\x1b[D\x1b[C\t\x1b[Cc\r')
             terminal.until(lambda:(dest/'copy.txt').exists())
-            terminal.send('\x1b[Bm\r');terminal.until(lambda:(dest/'move.txt').exists() and not (left/'move.txt').exists())
-            terminal.send('\tx');terminal.finish(None)
+            terminal.send('\t\x1b[Bm\r');terminal.until(lambda:(dest/'move.txt').exists() and not (left/'move.txt').exists())
+            terminal.send('x');terminal.finish(None)
             self.assertEqual(callback.read_bytes(),os.fsencode(dest)+b'\0')
             self.assertIn(b'< dest',terminal.output)
 

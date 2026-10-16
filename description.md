@@ -679,3 +679,41 @@ scripts/distro-tty-smoke.py 在隔离 root 真实 PTY 中验证 Python3 运行�
 来源：[Rust 1.88 发布说明](https://blog.rust-lang.org/2025/06/26/Rust-1.88.0/)、[Fedora GLib 包](https://packages.fedoraproject.org/pkgs/glib2/glib2/)、[Ubuntu libglib2.0-bin](https://packages.ubuntu.com/noble/libglib2.0-bin)、[Kali 与 Debian](https://www.kali.org/docs/policy/kali-linux-relationship-with-debian/)、[Kali Zsh 默认 shell](https://www.kali.org/blog/kali-linux-2020-4-release/)、[Zsh builtin read](https://zsh.sourceforge.io/Doc/Release/Shell-Builtin-Commands.html)。
 
 最终验证（2026-10-15）：29 Rust 单元 + 61 Python 核心 / CLI / PTY / shell 集成检查通过，Clippy -D warnings、fmt 与 diff 检查通过。本机新配置 / release / 安装入口已更新；八场景内存最大 8.237 MB。Ubuntu 24.04.5 LTS、Fedora 44、Kali Rolling 官方 OCI 用户空间全部通过安装、Bash/Zsh 登录、Python3 fallback、TTY 新建 / 重命名 / 复制 / 移动 / 回收站、termios 恢复、Zsh x 同 shell 目录切换。三组记录的二进制 SHA256 与当前 release 及内存报告相同。首次不可访问主机 Docker socket 后使用 rootless bubblewrap；没有 sudo 授权或改变主机 Docker 用户组。
+
+
+### 已替换的旧版复制／移动交互
+
+`H/L` 横移，PgUp/PgDn 同层级循环翻页，Home/End 选择首末节点；输入时 Enter 确认、Esc 取消、Ctrl+U 清空、Ctrl+V 粘贴 filex 内部路径缓冲。单栏复制 / 移动填写**完整目标路径，包含目标名称**；相对路径以源项目的父目录为基准，不覆盖已有目标，目标父目录必须存在。文件树不自动遍历符号链接。
+
+跨栏复制 / 移动：左侧选中文件或文件夹，`v` 开启双栏，`Tab` 切到另一侧，用 `g` 指定目的目录并选中目标 folder，再 `Tab` 回源侧，按 `c` / `m`。输入框预填「另一侧选中目录 / 源名称」；另一侧选中文件时用其父目录，选中链接目标时用目标目录。可修改路径，按 Enter 执行、Esc 取消；同名目标不会覆盖。操作后两侧刷新并保留展开状态。双栏至少需要 75 列；`q` 仍显示当前侧信息，双栏下需至少 110 列。
+
+
+## 2026-10-16 光标目标、多选、输入光标与 ZIP
+
+- `Ui.pending` 保存源快照与复制／移动类型；Space 多选保存在有界显示／搜索路径集合中，`[*]` 为绘制标记。重叠父子源按路径层级去重；批内目标名称重复、已有目标及自身内部复制先统一预检，再逐项操作。运行中权限或 I/O 错误仍可能出现部分成功，保留未完成来源并报告数量，不宣称事务回滚。成功项目取消标记；回收站同样支持多选，重命名仍只处理光标项目。
+- 目标模式在已展开目录下附加虚拟 `+` 节点，使用当前树和镜像导航；不创建名为 `+` 的实际文件，也不隐藏真实同名文件。选中 `+` 时 Enter 提示新目录名，创建后选中真实目录；再 Enter 执行。Esc 或成功退出模式会移除虚拟节点，保持其他展开分支。用户主动创建的目录不会因取消复制／移动而删除。
+- `src/edit.rs` 为所有输入框提供 UTF-8 字符边界光标；Left/Right、Home/End、Backspace/Delete 与光标处插入／粘贴共用实现。字符组合与终端字体仍依赖 Unicode width，未实现复杂 grapheme 编辑。
+- ZIP opener 使用独立参数数组 `bash -- {filex}/scripts/unzip.sh {path}`，不将文件名拼接进 shell 代码。Python 标准库先校验 central directory，拒绝绝对／驱动器／越界路径、特殊设备和链接条目；Bash 随后执行 unzip 校验与 -n 解压。新建随机输出目录，原 ZIP 不删除。Python 只为此可选解压功能所需，普通浏览／复制／移动无需 Python。
+- 两个产品独立保留平台接口，共用的模型、输入与 TUI 逻辑同步更新。Windows 只能在本机交叉编译，不能据此宣称 Windows 原生交互测试通过。
+
+验证：两版各 33 项 Rust 共用测试在 Linux 通过；fileX 的 64 项 Python／PTY 测试通过，包括新建 `+` 目录后的多选复制、中文名称中间编辑、TTY 与镜像双栏回归。Windows release 和测试 exe 已交叉编译；未运行 Windows 11 原生测试。记录：`operation-validation.json`。
+
+
+## 2026-10-16 多选方框与打开方式筛选
+
+多选项使用三行彩色矩形，布局为边框预留行距和列宽，镜像栏复用相同裁切规则；当前光标保留反色，多选边框加粗且不随其他分支变暗。`colors.mark_color` 默认 #FF55FF。ASCII／无色终端保留形状。`Opener.extensions` 限制菜单可见性，并在 open_command 再次验证，防止通过错误默认配置对不相关扩展名执行解释器。旧配置继续继承内置扩展名限制，自定义程序可以显式声明适用范围。
+
+附加验证：两版各 35 项 Rust 共用测试在 Linux 通过，包含矩形行距、颜色配置及专用扩展名限制；真实 PTY 验证 ASCII 方框与亮洋红 ANSI 输出，以及 .txt 隐藏解释器、.py 显示 Python。Windows release 与测试 exe 再次交叉编译，尚无 Windows 原生验证。
+
+
+## 2026-10-16 目录置顶／沉底与 Git 箭头
+
+`order.top/bottom` 与 `directory_order` 按名称精确排序，置顶可跨过 directories_first；普通项继续按已有 name/size/modified 排序，沉底项最后显示。绝对路径（读取配置时规范化）优先于目录名规则。按列表索引排序，缓存上限选择使用同一排序键。重读配置后沿用既有刷新逻辑。
+
+`src/git_status.rs` 在后台读取稳定的 porcelain v2 -z、ls-files -z 与 cached-upstream 对比，不解析面向人的 git 文本输出。rename 的旧路径单独消费，文件名空格／Unicode／换行不改变字段切分。状态仅保留有界映射，逐项读取未跟踪文件以避免把被忽略的子项误标为未跟踪，最多 4 个仓库；单个子进程最多 512 KiB 输出、1.5 秒执行预算，超限或失败不显示猜测标记。每次展开目录发现其最近 .git 仓库（含 worktree .git 文件）；后台完成通过原有 200ms 输入轮询唤醒一次重绘，无持续的逐帧 Git 调用。关闭分支不会主动扫描其内部嵌套仓库。
+
+关闭 optional locks 与 fsmonitor，不联网、不执行 Git hooks 或外部 diff/textconv。F5 清理完成快照后按已展开分支重新查询。目录以冲突 > 未暂存修改 > 暂存 > 未跟踪 > 分叉/落后/领先 > 干净状态汇总；已配置上游时，文件只在其内容与 cached upstream 有差异时显示领先／落后／分叉，不给其他未改变文件错误标记“未推送”。上游状态为本地缓存，不能证明服务器当前状态。忽略项或超出映射上限的项目保留普通箭头。
+
+来源：[Git status porcelain v2](https://git-scm.com/docs/git-status)、[Git ls-files](https://git-scm.com/docs/git-ls-files)。Windows 仍以交叉编译验证为界，未在 Windows 11 原生实测。
+
+验证：两版各 38 项 Rust 测试在 Linux 通过；fileX 全量 66 项 Python／PTY 回归通过，最后的未跟踪忽略项改进另经 Git 单元测试及 3 项光标／菜单／Git 终端测试复核。临时 Git 仓库验证本地状态、Unicode 重命名、忽略项、上游四种同步状态、输出条目上限及索引字节不变。Windows release 与测试 exe 已交叉编译，未执行 Windows 原生测试。

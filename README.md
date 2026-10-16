@@ -71,7 +71,9 @@ sudo apt update && sudo apt install build-essential python3 libglib2.0-bin nano 
 | `Ctrl+R` / `F5` / `Ctrl+F5`，`,` | 刷新目录、重载配置 |
 | `?`，`Q` | 帮助、退出（小写 q 用于 Dashboard） |
 
-`H/L` 横移，PgUp/PgDn 同层级循环翻页，Home/End 选择首末节点；输入时 Enter 确认、Esc 取消、Ctrl+U 清空、Ctrl+V 粘贴 filex 内部路径缓冲。单栏复制 / 移动填写**完整目标路径，包含目标名称**；相对路径以源项目的父目录为基准，不覆盖已有目标，目标父目录必须存在。文件树不自动遍历符号链接。
+`Space` 标记／取消标记文件或目录，显示亮洋红方框，可跨目录、跨双栏选择；`Esc` 清空多选。`c/m` 后用方向键选择目标 **folder**，按 `Enter` 复制／移动整批项目；双栏时自动切到另一侧。此时展开目录的末尾有可选 `+`，选中后 Enter（或直接按 `+`）输入新目录名，创建后选中新目录，再 Enter 执行。`g` 可输入目标根目录，`Esc` 取消待执行操作并保留标记，再按一次清空标记。同名目标、批内重名或目录复制到自身内部会拒绝执行；父目录与其子项同时选中时只处理父目录一次。`Delete/D` 同样支持批量回收站删除，再按 Enter 确认。重命名仅作用于当前光标项目。
+
+`H/L` 横移，PgUp/PgDn 同层级循环翻页，Home/End 选择首末节点；重命名、创建及路径输入框支持 `←/→` 移动光标、Home/End、光标处插入、Backspace/Delete、Ctrl+U 清空和 Ctrl+V 插入内部路径缓冲。文件树不自动遍历符号链接。
 
 Linux 原生控制台（`TERM=linux` 或识别到真实 VT）自动使用 16 色、ASCII 连线及英文控制提示；SSH / 无桌面会话也默认 ASCII 提示。默认颜色模式 `consistent` 把两边配置颜色映射到同一套 Linux 16 色；Konsole 直接显示这些颜色的 RGB，不使用主题中的 ANSI 色表。桌面保留中文提示与现代终端协议。TTY 中推荐 `a` / `A` 新建文件 / 文件夹、`y` 保存路径、`Ctrl+R` 刷新：传统终端通常无法区分 `Ctrl+Shift+N` 与 `Ctrl+N`。方向键、`v` / `Tab` 双栏、`c` / `m`、搜索、回收站及 `x` 均可使用；复制路径缓冲仅在当前 filex 进程内，退出即释放。
 
@@ -79,7 +81,7 @@ Linux 原生控制台（`TERM=linux` 或识别到真实 VT）自动使用 16 色
 
 双栏左树向右展开，右树向左展开，关于树区域中轴镜像，文字保持正常阅读方向。**右侧 `←` 展开 / 进入子级、`→` 返回父级**；上下同级移动、`h` 收起等保持原语义，软链接目标的进入 / 返回箭头也反转。标题中的 `●` 标识当前操作侧。`g` 改变当前侧的根目录。
 
-跨栏复制 / 移动：左侧选中文件或文件夹，`v` 开启双栏，`Tab` 切到另一侧，用 `g` 指定目的目录并选中目标 folder，再 `Tab` 回源侧，按 `c` / `m`。输入框预填「另一侧选中目录 / 源名称」；另一侧选中文件时用其父目录，选中链接目标时用目标目录。可修改路径，按 Enter 执行、Esc 取消；同名目标不会覆盖。操作后两侧刷新并保留展开状态。双栏至少需要 75 列；`q` 仍显示当前侧信息，双栏下需至少 110 列。
+跨栏复制 / 移动：在源侧选中或用 Space 标记项目，按 `c/m` 自动切到另一侧，用方向键或 `g` 定位目标目录，Enter 执行；Tab 可切换两侧继续选目标。两侧保留展开状态并刷新。双栏至少需要 75 列；双栏 Dashboard 至少需要 110 列。
 
 Enter 在 folder 上直接展开子树，保留其他已展开分支；子级仍通过左右方向键进入。右侧镜像栏按现有方向向左展开。`h` 收起当前 folder；`w` 才显示目录打开方式菜单。TUI 的终端编辑器（如 Vim/Neovim/Nano）优先复用同一 tmux window 内右侧空闲 pane，并切换焦点过去；没有合适 pane、pane 繁忙或已有未提交命令时，在当前终端运行，退出后返回原树。
 
@@ -187,3 +189,27 @@ TTY 登录的 Bash 自动读取已有的第一个 `.bash_profile` / `.bash_login
 安装器自动识别 Bash / Zsh；可 `python3 scripts/install_alias.py --shell zsh` 显式选择。Zsh 维护 `.zshrc` / `.zprofile` 并遵循 `ZDOTDIR`，交互登录只加载一次 `.zshrc`；Bash 的现有加载方式保留。其他 shell 可用 `--command-only`，`x` 使用已说明的独立 shell 退回方式。
 
 跨发行版复测：有 bubblewrap 和 Python 3.12+ 时运行 `python3 scripts/distro-smoke.py --install-tools`。它下载 Ubuntu / Fedora / Kali 官方 OCI 镜像，在用户缓存中的隔离根目录安装测试依赖，不修改主机软件包或登录文件；核对安装、Python3、TTY 文件操作和 Zsh `x`。结果写入 [distro-validation.json](distro-validation.json)。这些是共享主机内核的用户空间 / PTY 检查，不代替实机 VT 或完整发行版启动验证。
+
+ZIP：在 `.zip` 上 Enter 选择 **Bash unzip / 解压 ZIP**（或 `o` 使用默认项），通过 Bash 调用 `unzip`，解压到压缩包旁全新的 `*.unpacked.随机后缀` 目录；原 ZIP 保留，不覆盖既有文件。需 Bash、unzip 和 Python 3（仅用于提取前校验 ZIP 路径／链接）；Windows 可用 Git Bash，并把 Python 加入 PATH。ZIP 内含越界路径或符号链接时会拒绝解压；失败保留部分输出目录以供检查。
+
+多选方框默认为亮洋红、加粗显示，当前光标所在项继续反色；可在 `[colors]` 设置 `mark_color = "#FF55FF"`。TTY 使用 ASCII 方框，16 色终端映射到亮洋红。
+
+打开菜单会隐藏不适用的专用程序：Python 对 `.py/.pyw`、Rscript 对 `.r`、Bash 对 `.sh/.bash`、unzip 对 `.zip`、Toolkit Markdown 对 `.md/.markdown`；Windows PowerShell 执行仅对 `.ps1` 显示。普通编辑器／系统关联仍通用。自定义 opener 可设置 `extensions = [".foo", ".bar"]`（大小写不敏感）；未设置或空列表表示通用。内置专用项即使旧配置没有 extensions 也会自动限制。
+
+目录顺序可在配置中设置；置顶／沉底优先于“目录在前”，列表顺序也会保留：
+
+```toml
+[order]
+top = ["index.html"]
+bottom = ["node_modules", "__pycache__"]
+
+[directory_order."~/Documents/site"]
+top = ["index.html", "package.json"]
+bottom = ["node_modules"]
+```
+
+`directory_order` 可用实际绝对目录路径（Windows 使用 TOML 单引号，例如 `[directory_order.'C:\work\site']`），或用目录名匹配所有同名目录；绝对路径规则优先，只作用于该目录直接子项。省略字段继承全局，显式 `[]` 清空继承。修改后按 `,` 重读配置。
+
+Git 仓库展开后，树节点箭头附加状态标记并着色：`?` 未跟踪、`M` 未暂存修改、`S` 已暂存、`!` 冲突、`C` 已跟踪且干净但未配置上游、`P` 干净且与本地记录的上游一致、`↑/↓/↕` 分别为领先／落后／分叉（TTY 用 `^/v/D`）。文件名颜色保留，目录汇总子项状态，底部说明当前项目状态。颜色用于提示，字符标记在无色模式也保留。
+
+Git 后台只读扫描，不自动 commit/push/fetch；`P` 不代表已实时查询服务器。F5／Ctrl+F5 更新本地快照；没有 Git 或查询失败时保持普通箭头。`[git] enabled = false` 可关闭，`max_entries` 默认 4000，每个窗口至多缓存 4 个已展开仓库；超出扫描范围不猜测状态。

@@ -1,0 +1,11 @@
+{
+  "date": "2026-10-16",
+  "rust_shared_tests_per_product": 38,
+  "linux_python_tests": 66,
+  "linux_pty": "multi-select, cursor destination, virtual + folder creation, Unicode rename cursor, mirrored transfers, TTY regression passed",
+  "zip": "Bash unzip Unicode/spaces/quotes, unique output folders, traversal and symlink rejection passed",
+  "windows": "release and test executable cross-compiled; native Windows 11 runtime not verified",
+  "box_and_opener_checks": "non-overlapping marked rectangles, ANSI bright magenta, Unicode cursor handoff, matching-only specialized runner menu, custom mark_color/extensions validated",
+  "directory_order": "global and directory-specific top/bottom, empty override, directory-first precedence tested",
+  "git": "temporary repositories: staged/modified/untracked/ignored/rename, upstream sync/ahead/behind/diverged; index unchanged; PTY background tip display and F5 refresh passed"
+}

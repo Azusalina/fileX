@@ -5,13 +5,16 @@ macro_rules! ui_format {
     };
 }
 mod config;
+mod edit;
 mod files;
+mod git_status;
 mod input;
 mod links;
 mod model;
 mod terminal_host;
 mod terminal_profile;
 mod tmux;
+mod transfer;
 mod tui;
 use std::{
     env,

@@ -97,9 +97,13 @@ class Config:
     folder_colors: dict = field(default_factory=lambda: _THEME["folder_colors"].copy())
     file_color: str = _THEME["colors"]["file_color"]
     selected_color: str = "#304962"
+    mark_color: str = "#FF55FF"
     line_color: str = _THEME["colors"]["line_color"]
     link_color: str = _THEME["colors"]["link_color"]
     path_color: str = _THEME["colors"]["path_color"]
+    order: dict = field(default_factory=dict)
+    directory_order: dict = field(default_factory=dict)
+    git: dict = field(default_factory=dict)
     keys: dict = field(default_factory=lambda: DEFAULT_KEYS.copy())
     openers: dict = field(default_factory=lambda: {k: {**v, "command": v["command"].copy()} for k, v in DEFAULT_OPENERS.items()})
     open_defaults: dict = field(default_factory=lambda: { ".py": "vscodium", ".html": "firefox", ".htm": "firefox", ".md": "markdown", ".markdown": "markdown", "*": "system"})
@@ -135,6 +139,16 @@ def load_config(path=None):
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"无法读取配置 {path}: {exc}") from exc
     data.pop("gui", None)  # Retired configuration.
+    for section in ("order", "directory_order", "git"):
+        value = data.pop(section, {})
+        if not isinstance(value, dict):
+            raise ValueError(f"{section}: 应为表")
+        if section != "git":
+            rules = value.values() if section == "directory_order" else [value]
+            for rule in rules:
+                if not isinstance(rule, dict) or rule.keys() - {"top", "bottom"} or any(not isinstance(names,list) or not all(isinstance(n,str) and n and '/' not in n and '\\' not in n for n in names) for names in rule.values()):
+                    raise ValueError(f"{section}: 应为 top / bottom 名称列表")
+        setattr(conf, section, value)
     allowed = {"browser", "layout", "preview", "colors", "keys", "search", "dashboard", "openers", "open_defaults", "extension_colors", "folder_colors", "tmux", "input_method", "links", "terminal"}
     unknown = data.keys() - allowed
     if unknown:
@@ -148,7 +162,7 @@ def load_config(path=None):
         "terminal": {"konsole_shortcuts", "tmux_extended_keys", "mode", "color_mode", "charset", "cli_opener"},
         "preview": {"preview_bytes", "preview_lines"}, "dashboard": {"dashboard_width"},
         "search": {"search_max_results", "search_scan_limit"},
-        "colors": {"background", "foreground", "folder_color", "file_color", "selected_color", "line_color", "link_color", "path_color"},
+        "colors": {"background", "foreground", "folder_color", "file_color", "selected_color", "line_color", "link_color", "path_color", "mark_color"},
     }
     # Drop retired options without changing the user's other settings.
     if isinstance(data.get("layout"), dict):
@@ -220,7 +234,7 @@ def load_config(path=None):
     if not isinstance(openers, dict):
         raise ValueError("openers: 应为程序定义表")
     for name, opener in openers.items():
-        if not isinstance(opener, dict) or opener.keys() - {"label", "command", "terminal", "copy_path", "pause_on_exit"}:
+        if not isinstance(opener, dict) or opener.keys() - {"label", "command", "terminal", "copy_path", "pause_on_exit", "extensions"}:
             raise ValueError(f"openers.{name}: 未知字段")
         base = conf.openers.get(name, {"label": name, "terminal": False})
         value = {**base, **opener}
@@ -235,6 +249,9 @@ def load_config(path=None):
             raise ValueError(f"openers.{name}.copy_path: 应为布尔值")
         if type(value.get("pause_on_exit", False)) is not bool:
             raise ValueError(f"openers.{name}.pause_on_exit: 应为布尔值")
+        extensions = value.get("extensions", [])
+        if not isinstance(extensions, list) or not all(isinstance(e, str) and e.startswith('.') and len(e) > 1 and not any(c in e for c in ('/', '\\', '\0')) for e in extensions):
+            raise ValueError(f"openers.{name}.extensions: 应为扩展名列表")
         conf.openers[name] = value
     folder_colors = data.get("folder_colors", {})
     if not isinstance(folder_colors, dict):

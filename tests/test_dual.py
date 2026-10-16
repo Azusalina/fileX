@@ -32,12 +32,12 @@ class DualPaneTests(unittest.TestCase):
             terminal.send('\x1b[D\x1b[D\x1b[D\x1b[C') # chosen -> expand -> seed -> chosen
             terminal.send('\t\x1b[Cc\r')
             terminal.until(lambda:(dest/'copy.txt').exists()); self.assertEqual((dest/'copy.txt').read_text(),'copied payload')
-            terminal.send('c\r');terminal.until(lambda:'目标已存在'.encode() in terminal.output)
+            terminal.send('\tc\r');terminal.until(lambda:'目标已存在'.encode() in terminal.output)
             self.assertEqual(source.read_text(),'copied payload');self.assertEqual((dest/'copy.txt').read_text(),'copied payload')
             terminal.send('c\x1b') # cancel without transfer
-            terminal.send('\x1b[Bm\r');terminal.until(lambda:(dest/'move.txt').exists() and not moved.exists())
+            terminal.send('\t\x1b[Bm\r');terminal.until(lambda:(dest/'move.txt').exists() and not moved.exists())
             self.assertEqual((dest/'move.txt').read_text(),'moved payload')
-            terminal.send('\t\x1b[D') # destination stays selected / expanded after transfer
+            terminal.send('\x1b[D') # destination stays selected / expanded after transfer
             terminal.send('p');terminal.until(lambda:b'copied payload' in terminal.output); terminal.send('\x1b\x1b[Cv')
             terminal.send('x');self.assertEqual(terminal.process.wait(timeout=5),0)
             self.assertEqual(callback.read_bytes(),os.fsencode(dest)+b'\0')
@@ -51,7 +51,7 @@ class DualPaneTests(unittest.TestCase):
             terminal=self.start(left,config,root/'cwd');self.destination(terminal,right)
             terminal.send('\t\x1b[Cc\r');terminal.until(lambda:(right/'pack/nested.txt').exists())
             self.assertEqual((right/'pack/nested.txt').read_text(),'nested content');self.assertTrue(folder.exists())
-            terminal.send('\x1b[Bc\r');terminal.until(lambda:(right/'a.js').is_symlink())
+            terminal.send('\t\x1b[Bc\r');terminal.until(lambda:(right/'a.js').is_symlink())
             self.assertEqual(os.readlink(right/'a.js'),'target.txt');self.assertTrue((left/'a.js').is_symlink())
             terminal.send('Q');self.assertEqual(terminal.process.wait(timeout=5),0)
 

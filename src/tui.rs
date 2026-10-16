@@ -87,21 +87,29 @@ fn read_key(auto_english: bool) -> Result<String, String> {
             return Ok("\x03".into());
         }
         if !event::poll(std::time::Duration::from_millis(200)).map_err(ioerr)? {
+            if crate::git_status::ready() {
+                return Ok("git_refresh".into());
+            }
             continue;
         }
         match event::read().map_err(ioerr)? {
             Event::FocusLost => continue,
             Event::FocusGained => {
                 // Reapply raw mode without replacing crossterm's saved shell state.
-                let mut settings = std::mem::MaybeUninit::<libc::termios>::uninit();
-                if unsafe { libc::tcgetattr(libc::STDIN_FILENO, settings.as_mut_ptr()) } == 0 {
-                    let mut settings = unsafe { settings.assume_init() };
-                    unsafe {
-                        libc::cfmakeraw(&mut settings);
-                        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &settings);
-                        libc::tcflow(libc::STDOUT_FILENO, libc::TCOON);
+                #[cfg(unix)]
+                {
+                    let mut settings = std::mem::MaybeUninit::<libc::termios>::uninit();
+                    if unsafe { libc::tcgetattr(libc::STDIN_FILENO, settings.as_mut_ptr()) } == 0 {
+                        let mut settings = unsafe { settings.assume_init() };
+                        unsafe {
+                            libc::cfmakeraw(&mut settings);
+                            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &settings);
+                            libc::tcflow(libc::STDOUT_FILENO, libc::TCOON);
+                        }
                     }
                 }
+                #[cfg(windows)]
+                terminal::enable_raw_mode().map_err(ioerr)?;
                 execute!(io::stdout(), Hide).map_err(ioerr)?;
                 if terminal_profile::get().enhanced {
                     execute!(io::stdout(), Print("\x1b[=1u\x1b[>4;2m")).map_err(ioerr)?;
@@ -329,7 +337,7 @@ impl TreeArea {
                     _ => c,
                 })
                 .collect::<String>();
-            if terminal_profile::get().ascii && text.starts_with("> ") {
+            if terminal_profile::get().ascii && text.starts_with('>') {
                 text.replace_range(..1, "<");
             }
             text
@@ -378,11 +386,12 @@ fn draw_tree(
         .find(|p| Rc::ptr_eq(&p.node, &pane.browser.selected))
         .ok_or("选中节点不在树中")?;
     if pane.focus {
-        if selected.y < pane.top {
-            pane.top = selected.y
+        let margin = usize::from(selected.node.borrow().marked);
+        if selected.y.saturating_sub(margin) < pane.top {
+            pane.top = selected.y.saturating_sub(margin);
         }
-        if selected.y >= pane.top + body {
-            pane.top = selected.y - body + 1
+        if selected.y + margin >= pane.top + body {
+            pane.top = (selected.y + margin + 1).saturating_sub(body);
         }
         if selected.x < pane.left {
             pane.left = selected.x
@@ -446,6 +455,51 @@ fn draw_tree(
     for item in &layout.items {
         if item.y >= pane.top && item.y < pane.top + body {
             let n = item.node.borrow();
+            if n.marked {
+                let width = item.label.width().saturating_sub(2);
+                let top = if terminal_profile::get().ascii {
+                    format!("+{}+", "-".repeat(width))
+                } else {
+                    format!("┌{}┐", "─".repeat(width))
+                };
+                let bottom = if terminal_profile::get().ascii {
+                    top.clone()
+                } else {
+                    format!("└{}┘", "─".repeat(width))
+                };
+                for (y, text, cursor) in [
+                    (item.y.saturating_sub(1), top.as_str(), false),
+                    (item.y, item.label.as_str(), true),
+                    (item.y + 1, bottom.as_str(), false),
+                ] {
+                    if y >= pane.top && y < pane.top + body {
+                        area.paint(
+                            out,
+                            y - pane.top + 3,
+                            item.x as isize - pane.left as isize + 1,
+                            text,
+                            Some(&pane.browser.conf.mark_color),
+                            cursor && active && Rc::ptr_eq(&item.node, &pane.browser.selected),
+                            true,
+                            false,
+                        )?;
+                    }
+                }
+                if n.git != crate::git_status::State::None {
+                    let tip = item.label.chars().skip(2).take(2).collect::<String>();
+                    area.paint(
+                        out,
+                        item.y - pane.top + 3,
+                        item.x as isize - pane.left as isize + 3,
+                        &tip,
+                        Some(n.git.color()),
+                        active && Rc::ptr_eq(&item.node, &pane.browser.selected),
+                        true,
+                        false,
+                    )?;
+                }
+                continue;
+            }
             let color = if n.dir {
                 pane.browser.conf.folder_color_for(&n.path)
             } else {
@@ -469,6 +523,21 @@ fn draw_tree(
                 false,
                 dim,
             )?;
+            if n.git != crate::git_status::State::None {
+                let tip = item.label.chars().take(2).collect::<String>();
+                area.paint(
+                    out,
+                    item.y - pane.top + 3,
+                    item.x as isize - pane.left as isize + 1,
+                    &tip,
+                    Some(n.git.color()),
+                    active
+                        && Rc::ptr_eq(&item.node, &pane.browser.selected)
+                        && pane.link_target.is_none(),
+                    true,
+                    false,
+                )?;
+            }
             if let Some(start) = item.link_start {
                 let target_selected =
                     Rc::ptr_eq(&item.node, &pane.browser.selected) && pane.link_target.is_some();
@@ -524,8 +593,14 @@ impl Pane {
         }
     }
 }
+struct Pending {
+    sources: Vec<PathBuf>,
+    moving: bool,
+}
 struct Ui {
     clipboard: String,
+    marked: std::collections::BTreeSet<PathBuf>,
+    pending: Option<Pending>,
     pane: Pane,
     other: Option<Pane>,
     right_active: bool,
@@ -538,6 +613,126 @@ struct Ui {
     exit_directory: Option<PathBuf>,
 }
 impl Ui {
+    fn sources(&self) -> Result<Vec<PathBuf>, String> {
+        if self.pane.link_target.is_some() {
+            return Err("Select the link itself before operating".into());
+        }
+        let mut paths: Vec<PathBuf> = if self.marked.is_empty() {
+            vec![self.selection_path()]
+        } else {
+            self.marked.iter().cloned().collect()
+        };
+        paths.sort_by_key(|p| p.components().count());
+        let mut sources: Vec<PathBuf> = Vec::new();
+        for path in paths {
+            std::fs::symlink_metadata(&path).map_err(ioerr)?;
+            if !sources.iter().any(|parent| path.starts_with(parent)) {
+                sources.push(path);
+            }
+        }
+        Ok(sources)
+    }
+    fn protected_root(&self, path: &Path) -> bool {
+        std::iter::once(&self.pane)
+            .chain(self.other.iter())
+            .any(|p| p.browser.root.borrow().path == path)
+    }
+    fn refresh_panes(&mut self) {
+        self.pane.browser.refresh();
+        self.pane.link_target = None;
+        if let Some(other) = &mut self.other {
+            other.browser.refresh();
+            other.link_target = None;
+        }
+        self.meta_path = None;
+    }
+    fn begin_transfer(&mut self, moving: bool) -> Result<(), String> {
+        let sources = self.sources()?;
+        if moving && sources.iter().any(|p| self.protected_root(p)) {
+            return Err("Cannot move the displayed root; first navigate to its parent".into());
+        }
+        self.pending = Some(Pending { sources, moving });
+        self.pane.browser.set_destination_mode(true);
+        if let Some(other) = &mut self.other {
+            other.browser.set_destination_mode(true);
+            self.switch_pane();
+        }
+        self.message = "Choose a destination folder with arrows; Enter executes; + creates a folder; Esc cancels".into();
+        Ok(())
+    }
+    fn cancel_transfer(&mut self) {
+        self.pending = None;
+        self.pane.browser.set_destination_mode(false);
+        if let Some(other) = &mut self.other {
+            other.browser.set_destination_mode(false);
+        }
+        self.meta_path = None;
+    }
+    fn create_destination(&mut self) -> Result<(), String> {
+        let directory = self.pane.browser.target();
+        let Some(name) = self.prompt("New destination folder", "")? else {
+            return Ok(());
+        };
+        let created = files::create(&directory, &name, true)?;
+        let parent = self
+            .pane
+            .browser
+            .visible()
+            .into_iter()
+            .find(|n| n.borrow().path == directory && !n.borrow().create_entry);
+        if let Some(parent) = parent {
+            self.pane.browser.expand(&parent, Some(&created));
+        }
+        if let Some(node) = self
+            .pane
+            .browser
+            .visible()
+            .into_iter()
+            .find(|n| n.borrow().path == created)
+        {
+            self.pane.browser.selected = node;
+        }
+        self.meta_path = None;
+        Ok(())
+    }
+    fn commit_transfer(&mut self) -> Result<(), String> {
+        if self.pane.browser.selected.borrow().create_entry {
+            return self.create_destination();
+        }
+        let directory = self.selection_path();
+        if !self.pane.browser.selected.borrow().dir || !directory.is_dir() {
+            return Err("Choose a folder (or + to create one)".into());
+        }
+        let pending = self.pending.as_ref().ok_or("No pending operation")?;
+        let plan = crate::transfer::plan(&pending.sources, &directory)?;
+        let moving = pending.moving;
+        let total = plan.len();
+        for (index, (source, destination)) in plan.into_iter().enumerate() {
+            if let Err(error) = files::transfer(&source, &destination, moving) {
+                self.refresh_panes();
+                return Err(format!(
+                    "Completed {index}/{total}; remaining items kept pending: {error}"
+                ));
+            }
+            self.marked.retain(|p| !p.starts_with(&source));
+            self.pending
+                .as_mut()
+                .unwrap()
+                .sources
+                .retain(|p| p != &source);
+        }
+        self.cancel_transfer();
+        self.refresh_panes();
+        let selected = self.pane.browser.selected.clone();
+        self.pane.browser.expand(&selected, None);
+        self.message = format!(
+            "{} {total} items to {}",
+            if moving { "Moved" } else { "Copied" },
+            directory.display()
+        );
+        Ok(())
+    }
+
     fn rebudget(&mut self) {
         self.pane.browser.conf.max_loaded = self.node_budget;
         if let Some(other) = &mut self.other {
@@ -587,6 +782,27 @@ impl Ui {
             .unwrap_or_else(|| self.pane.browser.selected.borrow().path.clone())
     }
     fn draw(&mut self) -> Result<(), String> {
+        self.pane.browser.update_git();
+        if let Some(other) = &mut self.other {
+            other.browser.update_git();
+        }
+        if self.pending.is_some() {
+            if !self.pane.browser.destination_mode {
+                self.pane.browser.set_destination_mode(true);
+            }
+            if let Some(other) = &mut self.other {
+                if !other.browser.destination_mode {
+                    other.browser.set_destination_mode(true);
+                }
+            }
+        }
+        for pane in std::iter::once(&self.pane).chain(self.other.iter()) {
+            for node in pane.browser.visible() {
+                let marked =
+                    self.marked.contains(&node.borrow().path) && !node.borrow().create_entry;
+                node.borrow_mut().marked = marked;
+            }
+        }
         let (w, h) = terminal::size().map_err(ioerr)?;
         let (w, h) = (w as usize, h as usize);
         let mut out = io::stdout().lock();
@@ -746,7 +962,15 @@ impl Ui {
                 selected.omitted
             )
         } else {
-            selected.path.to_string_lossy().into_owned()
+            if selected.git == crate::git_status::State::None {
+                selected.path.to_string_lossy().into_owned()
+            } else {
+                format!(
+                    "{} | Git: {}",
+                    selected.path.display(),
+                    selected.git.label()
+                )
+            }
         };
         put(
             &mut out,
@@ -761,7 +985,13 @@ impl Ui {
             None,
             false,
         )?;
-        let footer = if terminal_profile::get().ascii {
+        let footer = if let Some(pending) = &self.pending {
+            format!(
+                "{} {} items: arrows choose folder | Enter execute | + create folder | Esc cancel",
+                if pending.moving { "MOVE" } else { "COPY" },
+                pending.sources.len()
+            )
+        } else if terminal_profile::get().ascii {
             format!(
                 "{} {}quit ?help Enter:expand/file {}menu {}info y:path {}fold {}rename {}dual {}switch",
                 if self.right_active {
@@ -794,20 +1024,30 @@ impl Ui {
                 self.pane.browser.conf.keys["switch_pane"]
             )
         };
+        let footer = if self.pending.is_none() {
+            format!("Space:mark [{}] | {footer}", self.marked.len())
+        } else {
+            footer
+        };
         put(&mut out, h - 1, 1, &footer, w, None, false)?;
         queue!(out, SetAttribute(Attribute::Reset), ResetColor).map_err(ioerr)?;
         out.flush().map_err(ioerr)
     }
     fn prompt(&mut self, label: &str, initial: &str) -> Result<Option<String>, String> {
-        let mut text = initial.to_owned();
+        let mut edit = crate::edit::Edit::new(initial);
         loop {
             self.draw()?;
             let (w, h) = terminal::size().map_err(ioerr)?;
-            let mut value = clean(&format!("{label}: {text}"));
-            while value.width() >= w.saturating_sub(2) as usize && !value.is_empty() {
-                let c = value.chars().next().unwrap();
-                value.drain(..c.len_utf8());
+            let prefix = format!("{label}: ");
+            let full = format!("{prefix}{}", edit.text);
+            let cursor = prefix.len() + edit.cursor;
+            let mut start = 0;
+            let available = w.saturating_sub(2).max(1) as usize;
+            while clean(&full[start..cursor]).width() >= available {
+                start += full[start..].chars().next().unwrap().len_utf8();
             }
+            let value = clip(&clean(&full[start..]), available);
+            let column = clean(&full[start..cursor]).width() as u16;
             let mut out = io::stdout().lock();
             default_style(&mut out)?;
             queue!(
@@ -815,7 +1055,8 @@ impl Ui {
                 MoveTo(0, h - 2),
                 Clear(ClearType::CurrentLine),
                 Show,
-                Print(&value)
+                Print(&value),
+                MoveTo(column, h - 2)
             )
             .map_err(ioerr)?;
             out.flush().map_err(ioerr)?;
@@ -824,23 +1065,14 @@ impl Ui {
             match key.as_str() {
                 "enter" => {
                     execute!(io::stdout(), Hide).map_err(ioerr)?;
-                    return Ok(Some(text));
+                    return Ok(Some(edit.text));
                 }
                 "escape" => {
                     execute!(io::stdout(), Hide).map_err(ioerr)?;
                     return Ok(None);
                 }
                 "\x03" => return Err("已取消".into()),
-                "backspace" => {
-                    text.pop();
-                }
-                "\x15" => text.clear(),
-                "\x16" => text.push_str(&self.clipboard),
-                _ => {
-                    if key.chars().count() == 1 && !key.chars().any(char::is_control) {
-                        text.push_str(&key)
-                    }
-                }
+                _ => edit.key(&key, &self.clipboard),
             }
         }
     }
@@ -1054,10 +1286,31 @@ impl Ui {
             .rule(&path, &self.pane.browser.conf.defaults, dir)
             .cloned()
             .unwrap_or("system".into());
+        if !self
+            .pane
+            .browser
+            .conf
+            .openers
+            .get(&default)
+            .is_some_and(|o| o.supports(&path))
+        {
+            default = "system".into();
+        }
         if !terminal_profile::get().desktop {
             default = files::cli_method(&self.pane.browser.conf, &default)
                 .unwrap_or("@preview")
                 .to_owned();
+        }
+        if default != "@preview"
+            && !self
+                .pane
+                .browser
+                .conf
+                .openers
+                .get(&default)
+                .is_some_and(|o| o.supports(&path))
+        {
+            default = "@preview".into();
         }
         let mut ids = vec![default.clone()];
         ids.extend(
@@ -1068,6 +1321,7 @@ impl Ui {
                 .keys()
                 .filter(|id| {
                     **id != default
+                        && self.pane.browser.conf.openers[*id].supports(&path)
                         && (terminal_profile::get().desktop
                             || self.pane.browser.conf.openers[*id].terminal)
                 })
@@ -1165,6 +1419,27 @@ impl Ui {
         }
     }
     fn operation(&mut self, action: &str) -> Result<(), String> {
+        if matches!(action, "copy" | "move") {
+            return self.begin_transfer(action == "move");
+        }
+        if action == "trash" && !self.marked.is_empty() {
+            let sources = self.sources()?;
+            if sources.iter().any(|p| self.protected_root(p)) {
+                return Err("Cannot trash the displayed root".into());
+            }
+            if !self.confirm(&format!("Trash {} selected items?", sources.len()))? {
+                return Ok(());
+            }
+            for path in sources {
+                if let Err(error) = files::trash(&path) {
+                    self.refresh_panes();
+                    return Err(error);
+                }
+                self.marked.retain(|p| !p.starts_with(&path));
+            }
+            self.refresh_panes();
+            return Ok(());
+        }
         if self.pane.link_target.is_some() {
             return Err(ui_format!(
                 "请按 {} 选回链接，或按 f 进入目标目录后操作文件",
@@ -1296,6 +1571,40 @@ impl Ui {
     }
     fn action(&mut self, key: &str) -> Result<bool, String> {
         self.rebudget();
+        if self.pending.is_some() {
+            if key == "escape" {
+                self.cancel_transfer();
+                return Ok(false);
+            }
+            if key == "enter" {
+                self.commit_transfer()?;
+                return Ok(false);
+            }
+            if key == "+" {
+                self.create_destination()?;
+                return Ok(false);
+            }
+        }
+        if key == " " && self.pending.is_none() {
+            let node = self.pane.browser.selected.borrow();
+            if !Rc::ptr_eq(&self.pane.browser.selected, &self.pane.browser.root)
+                && !node.create_entry
+            {
+                let path = node.path.clone();
+                drop(node);
+                if !self.marked.remove(&path) {
+                    if self.marked.len() >= self.node_budget {
+                        return Err("Selection limit reached (max_loaded_nodes)".into());
+                    }
+                    self.marked.insert(path);
+                }
+            }
+            return Ok(false);
+        }
+        if key == "escape" {
+            self.marked.clear();
+            return Ok(false);
+        }
         let navigation_key = if self.right_active {
             match key {
                 "left" => "right",
@@ -1332,6 +1641,29 @@ impl Ui {
                 }),
             })
             .to_string();
+        if self.pending.is_some()
+            && ![
+                "up",
+                "down",
+                "expand",
+                "collapse",
+                "parent",
+                "expand_all",
+                "collapse_all",
+                "hidden",
+                "refresh",
+                "goto",
+                "search",
+                "next_match",
+                "previous_match",
+                "switch_pane",
+                "quit",
+            ]
+            .contains(&action.as_str())
+            && !["home", "end", "pageup", "pagedown", "H", "L", "resize"].contains(&key)
+        {
+            return Ok(false);
+        }
         if matches!(
             action.as_str(),
             "up" | "down"
@@ -1571,9 +1903,9 @@ impl Ui {
                     .collect::<Vec<_>>()
                     .join("\n");
                 if terminal_profile::get().ascii {
-                    text.push_str("\n\nUp/Down (k/j): all visible peers at the same depth; wrap around.\nRight (l): expand / enter child; Left: parent (mirrored on right pane).\nh collapse; E/C expand/collapse all; . hidden files; f focus root.\na / Ctrl+N new file; A new folder (Ctrl+Shift+N may equal Ctrl+N on TTY).\nr rename; c/m copy/move; Delete/D trash, Enter again confirms, Esc cancels.\ny / Ctrl+Alt+C copy absolute path; Ctrl+V paste it in input prompts.\nCLI stores paths inside filex; desktop also uses the Wayland clipboard.\nx exit to selected folder (file: parent); Q / Ctrl+C quit.\nEnter expands folders (cursor stays); files: open with. w menu; o default; p preview; q dashboard; I link information.\nHeadless defaults: Nano, Neovim, Vim, then built-in preview; no automatic script execution.\nPython / Rscript / Bash can be explicitly selected to run scripts.\nCtrl+F / / search; n/N matches; g / Ctrl+L change root.\nCtrl+R / F5 refresh; comma reload config; [ / ] dashboard width.\nv toggle mirrored panes; Tab switch; c/m prefill the other folder.\nH/L pan; PgUp/PgDn page peers; Ctrl+U clear input.\nTerminal openers reuse an idle pane on the right in tmux.\nCopy/move require the full destination path and never overwrite it.");
+                    text.push_str("\n\nUp/Down (k/j): all visible peers at the same depth; wrap around.\nRight (l): expand / enter child; Left: parent (mirrored on right pane).\nh collapse; E/C expand/collapse all; . hidden files; f focus root.\na / Ctrl+N new file; A new folder (Ctrl+Shift+N may equal Ctrl+N on TTY).\nr rename; c/m copy/move; Delete/D trash, Enter again confirms, Esc cancels.\ny / Ctrl+Alt+C copy absolute path; Ctrl+V paste it in input prompts.\nPaths use the Wayland clipboard and an internal clipboard.\nx exit to selected folder (file: parent); Q / Ctrl+C quit.\nEnter expands folders (cursor stays); files: open with. w menu; o default; p preview; q dashboard; I link information.\nHeadless defaults: Nano, Neovim, Vim, then built-in preview; no automatic script execution.\nPython / Rscript / Bash can be explicitly selected to run scripts.\nCtrl+F / / search; n/N matches; g / Ctrl+L change root.\nCtrl+R / F5 refresh; comma reload config; [ / ] dashboard width.\nv toggle mirrored panes; Tab switch; c/m switch to the other pane to choose a destination.\nH/L pan; PgUp/PgDn page peers; Ctrl+U clear input.\nTerminal openers reuse an idle pane on the right in tmux.\nSpace marks/unmarks files/folders; Esc clears marks. c/m: choose destination with arrows, Enter executes, + creates folder; Esc cancels. Existing targets are never overwritten. Rename prompts: Left/Right/Home/End, Delete/Backspace edit at cursor.");
                 } else {
-                    text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C / y 复制选中项目的绝对路径；输入框 Ctrl+V 粘贴\nf 当前目录设为根并刷新\nEnter 展开目录（光标保留）/ 文件选择打开方式 · w 打开菜单 · o 默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nv 双栏开关 · Tab 切换操作侧 · 右栏 ← 展开 / → 父级\n双栏 c/m 预填另一侧目录的完整目标路径，Enter 执行 / Esc 取消\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\n复制 / 移动填写完整目标路径，不覆盖已有目标。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
+                    text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C / y 复制选中项目的绝对路径；输入框 Ctrl+V 粘贴\nf 当前目录设为根并刷新\nEnter 展开目录（光标保留）/ 文件选择打开方式 · w 打开菜单 · o 默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nv 双栏开关 · Tab 切换操作侧 · 右栏 ← 展开 / → 父级\n双栏 c/m 切到另一侧，方向键选目标目录，Enter 执行 / Esc 取消\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\nSpace 多选，Esc 清空；c/m 后方向键选目标目录，Enter 执行，+ 新建目录，Esc 取消。不覆盖已有目标。输入框支持左右/Home/End及光标处增删。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
                 }
                 self.pager(label("filex 快捷键", "filex keys"), &text)?
             }
@@ -1631,6 +1963,8 @@ pub fn run(browser: Browser, path: PathBuf) -> Result<Option<PathBuf>, String> {
     let budget = browser.conf.max_loaded;
     let mut ui = Ui {
         clipboard: String::new(),
+        marked: Default::default(),
+        pending: None,
         pane: Pane::new(browser),
         other: None,
         right_active: false,
@@ -1649,7 +1983,7 @@ pub fn run(browser: Browser, path: PathBuf) -> Result<Option<PathBuf>, String> {
         ui.draw()?;
         let key = read_key(ui.pane.browser.conf.auto_english)?;
         ui.pane.focus = true;
-        if !["H", "L", "resize"].contains(&key.as_str()) {
+        if !["H", "L", "resize", "git_refresh"].contains(&key.as_str()) {
             ui.message.clear()
         }
         match ui.action(&key) {
@@ -1686,7 +2020,7 @@ mod dual_tests {
                     fs::write(folder.join(format!("file{j}.txt")), "test").unwrap();
                 }
             }
-            Self(root)
+            Self(fs::canonicalize(root).unwrap())
         }
     }
     impl Drop for Fixture {
@@ -1701,6 +2035,8 @@ mod dual_tests {
         };
         Ui {
             clipboard: String::new(),
+            marked: Default::default(),
+            pending: None,
             pane: Pane::new(Browser::new(root, conf).unwrap()),
             other: None,
             right_active: false,
@@ -1799,5 +2135,237 @@ mod dual_tests {
         assert!(!ui.right_active);
         assert!(Rc::ptr_eq(&ui.pane.browser.root, &retained));
         assert_eq!(ui.pane.browser.conf.max_loaded, 100);
+    }
+    #[test]
+    fn marked_batch_transfer_uses_cursor_destination_and_cleans_virtual_entries() {
+        let f = Fixture::new();
+        let mut ui = ui(&f.0);
+        let a = f.0.join("alpha.txt");
+        let b = f.0.join("beta.txt");
+        fs::write(&a, "alpha").unwrap();
+        fs::write(&b, "beta").unwrap();
+        ui.pane.browser.refresh();
+        for p in [&a, &b] {
+            ui.pane.browser.selected = ui
+                .pane
+                .browser
+                .visible()
+                .into_iter()
+                .find(|n| &n.borrow().path == p)
+                .unwrap();
+            ui.action(" ").unwrap();
+        }
+        assert_eq!(ui.marked.len(), 2);
+        ui.action("c").unwrap();
+        assert!(
+            ui.pane
+                .browser
+                .root
+                .borrow()
+                .children
+                .last()
+                .unwrap()
+                .borrow()
+                .create_entry
+        );
+        let dest = f.0.join("branch0");
+        ui.pane.browser.selected = ui
+            .pane
+            .browser
+            .visible()
+            .into_iter()
+            .find(|n| n.borrow().path == dest)
+            .unwrap();
+        ui.action("enter").unwrap();
+        assert_eq!(fs::read_to_string(dest.join("alpha.txt")).unwrap(), "alpha");
+        assert!(a.exists() && b.exists());
+        assert!(ui.pending.is_none() && ui.marked.is_empty());
+        assert!(
+            !ui.pane
+                .browser
+                .visible()
+                .iter()
+                .any(|n| n.borrow().create_entry)
+        );
+        // Single selection moves through the same cursor workflow.
+        ui.pane.browser.selected = ui
+            .pane
+            .browser
+            .visible()
+            .into_iter()
+            .find(|n| n.borrow().path == a)
+            .unwrap();
+        ui.action("m").unwrap();
+        let dest = f.0.join("branch1");
+        ui.pane.browser.selected = ui
+            .pane
+            .browser
+            .visible()
+            .into_iter()
+            .find(|n| n.borrow().path == dest)
+            .unwrap();
+        ui.action("enter").unwrap();
+        assert!(!a.exists());
+        assert!(dest.join("alpha.txt").exists());
+    }
+    #[test]
+    fn preflight_prevents_partial_copy_on_collision_and_escape_cancels() {
+        let f = Fixture::new();
+        let mut ui = ui(&f.0);
+        let a = f.0.join("alpha");
+        let b = f.0.join("beta");
+        fs::write(&a, "a").unwrap();
+        fs::write(&b, "b").unwrap();
+        let dest = f.0.join("branch0");
+        fs::write(dest.join("beta"), "original").unwrap();
+        ui.marked.extend([a.clone(), b.clone()]);
+        ui.action("c").unwrap();
+        ui.pane.browser.selected = ui
+            .pane
+            .browser
+            .visible()
+            .into_iter()
+            .find(|n| n.borrow().path == dest)
+            .unwrap();
+        assert!(ui.action("enter").is_err());
+        assert!(!dest.join("alpha").exists());
+        assert_eq!(fs::read_to_string(dest.join("beta")).unwrap(), "original");
+        ui.action("escape").unwrap();
+        assert!(ui.pending.is_none());
+        assert_eq!(ui.marked.len(), 2);
+        assert!(
+            !ui.pane
+                .browser
+                .visible()
+                .iter()
+                .any(|n| n.borrow().create_entry)
+        );
+        ui.action("escape").unwrap();
+        assert!(ui.marked.is_empty());
+    }
+    #[test]
+    fn destination_plus_is_transient_and_parent_child_marks_deduplicate() {
+        let f = Fixture::new();
+        let mut ui = ui(&f.0);
+        let parent = f.0.join("branch0");
+        ui.marked.extend([parent.clone(), parent.join("file0.txt")]);
+        assert_eq!(ui.sources().unwrap(), vec![parent.clone()]);
+        ui.begin_transfer(false).unwrap();
+        let node = ui
+            .pane
+            .browser
+            .visible()
+            .into_iter()
+            .find(|n| n.borrow().path == parent)
+            .unwrap();
+        ui.pane.browser.expand(&node, None);
+        assert!(node.borrow().children.last().unwrap().borrow().create_entry);
+        ui.pane.browser.selected = node.borrow().children.last().unwrap().clone();
+        assert_eq!(ui.pane.browser.target(), parent);
+        ui.cancel_transfer();
+        assert!(Rc::ptr_eq(&ui.pane.browser.selected, &node));
+        assert!(
+            !node
+                .borrow()
+                .children
+                .iter()
+                .any(|n| n.borrow().create_entry)
+        );
+    }
+    #[test]
+    fn marked_items_have_non_overlapping_bright_rectangles() {
+        let f = Fixture::new();
+        let mut ui = ui(&f.0);
+        let children = ui.pane.browser.root.borrow().children.clone();
+        children[0].borrow_mut().marked = true;
+        children[1].borrow_mut().marked = true;
+        let layout = Layout::new(&ui.pane.browser);
+        let positions: Vec<_> = layout
+            .items
+            .iter()
+            .filter(|p| p.node.borrow().marked)
+            .collect();
+        assert!(positions[1].y >= positions[0].y + 3);
+        assert!(positions[0].label.starts_with("│ ") && positions[0].label.ends_with(" │"));
+        let mut output = Vec::new();
+        draw_tree(
+            &mut output,
+            &mut ui.pane,
+            TreeArea {
+                x: 0,
+                width: 100,
+                mirrored: false,
+            },
+            20,
+            true,
+        )
+        .unwrap();
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains('┌') && output.contains('┘'));
+        assert_eq!(ui.pane.browser.conf.mark_color, "#FF55FF");
+        assert!(output.contains("\x1b[1m"));
+    }
+    #[test]
+    fn specialized_openers_match_only_their_extensions_and_custom_rules() {
+        let f = Fixture::new();
+        let conf = Config::default();
+        for (id, yes, no) in [
+            ("python", "MAIN.PY", "main.txt"),
+            ("rscript", "stats.R", "stats.py"),
+            ("bash", "run.sh", "run.zip"),
+            ("unzip", "data.zip", "data.sh"),
+            ("markdown", "readme.md", "readme.r"),
+        ] {
+            assert!(conf.openers[id].supports(&f.0.join(yes)));
+            assert!(!conf.openers[id].supports(&f.0.join(no)));
+            assert!(!conf.openers[id].supports(&f.0));
+            assert!(files::open_command(&f.0.join(no), &conf, id).is_err());
+        }
+        let path = f.0.join("rules.conf");
+        fs::write(
+            &path,
+            "[colors]\nmark_color='#00FF00'\n[openers.python]\nextensions=['.py','.ipy']\n",
+        )
+        .unwrap();
+        let conf = Config::load(&path).unwrap();
+        assert_eq!(conf.mark_color, "#00FF00");
+        assert!(conf.openers["python"].supports(&f.0.join("a.IPY")));
+        assert!(!conf.openers["python"].supports(&f.0.join("a.txt")));
+    }
+    #[test]
+    fn directory_pins_override_directory_first_and_bottom_order() {
+        let f = Fixture::new();
+        fs::write(f.0.join("index.html"), "index").unwrap();
+        fs::create_dir(f.0.join("node_modules")).unwrap();
+        let path = f.0.join("ordering.conf");
+        fs::write(
+            &path,
+            "[order]\ntop=['index.html']\nbottom=['node_modules']\n",
+        )
+        .unwrap();
+        let conf = Config::load(&path).unwrap();
+        let browser = Browser::new(&f.0, conf).unwrap();
+        let names: Vec<_> = browser
+            .root
+            .borrow()
+            .children
+            .iter()
+            .map(|n| {
+                n.borrow()
+                    .path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(names.first().unwrap(), "index.html");
+        assert_eq!(names.last().unwrap(), "node_modules");
+        let key = f.0.file_name().unwrap().to_string_lossy();
+        fs::write(&path,format!("[order]\ntop=['index.html']\nbottom=['node_modules']\n[directory_order.'{key}']\ntop=['ordering.conf']\nbottom=[]\n")).unwrap();
+        let conf = Config::load(&path).unwrap();
+        assert_eq!(conf.order_rank(&f.0, "ordering.conf"), (-1, 0));
+        assert_eq!(conf.order_rank(&f.0, "node_modules"), (0, 0));
+        assert_eq!(conf.order_rank(Path::new("/other"), "index.html"), (-1, 0));
     }
 }

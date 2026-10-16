@@ -12,6 +12,29 @@ pub struct Opener {
     pub terminal: bool,
     pub copy_path: bool,
     pub pause_on_exit: bool,
+    pub extensions: Vec<String>,
+}
+#[derive(Clone, Debug, Default)]
+pub struct OrderRule {
+    pub top: Vec<String>,
+    pub bottom: Vec<String>,
+}
+fn order_names(value: &Value) -> Result<Vec<String>, String> {
+    value
+        .as_array()
+        .ok_or("Order must be a list of names")?
+        .iter()
+        .map(|v| {
+            let name = string(v, "order name")?;
+            if name.is_empty()
+                || name.contains(['/', '\\', '\0'])
+                || [".", ".."].contains(&name.as_str())
+            {
+                return Err("Order entries must be single file/folder names".into());
+            }
+            Ok(name)
+        })
+        .collect()
 }
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -47,6 +70,11 @@ pub struct Config {
     pub line_color: String,
     pub link_color: String,
     pub path_color: String,
+    pub mark_color: String,
+    pub order: OrderRule,
+    pub directory_order: BTreeMap<String, OrderRule>,
+    pub git_enabled: bool,
+    pub git_max_entries: usize,
     pub keys: BTreeMap<String, String>,
     pub openers: BTreeMap<String, Opener>,
     pub defaults: BTreeMap<String, String>,
@@ -105,6 +133,18 @@ pub fn key_code(value: &str) -> String {
         return char::from(value.as_bytes()[5].to_ascii_lowercase() - b'a' + 1).to_string();
     }
     value.to_owned()
+}
+impl Opener {
+    pub fn supports(&self, path: &Path) -> bool {
+        self.extensions.is_empty()
+            || !path.is_dir()
+                && path.file_name().is_some_and(|name| {
+                    let name = name.to_string_lossy().to_lowercase();
+                    self.extensions
+                        .iter()
+                        .any(|extension| name.ends_with(extension))
+                })
+    }
 }
 impl Default for Config {
     fn default() -> Self {
@@ -179,6 +219,12 @@ impl Default for Config {
             ("rscript", "Rscript 执行", vec!["Rscript", "{path}"], true),
             ("bash", "Bash 执行", vec!["bash", "--", "{path}"], true),
             (
+                "unzip",
+                "Bash unzip / 解压 ZIP",
+                vec!["bash", "--", "{filex}/scripts/unzip.sh", "{path}"],
+                true,
+            ),
+            (
                 "markdown",
                 "Toolkit Markdown / Firefox",
                 vec![
@@ -203,7 +249,18 @@ impl Default for Config {
                     command: command.into_iter().map(str::to_string).collect(),
                     terminal,
                     copy_path: id == "markdown",
-                    pause_on_exit: ["python", "rscript", "bash"].contains(&id),
+                    extensions: match id {
+                        "python" => vec![".py", ".pyw"],
+                        "rscript" => vec![".r"],
+                        "bash" => vec![".sh", ".bash"],
+                        "unzip" => vec![".zip"],
+                        "markdown" => vec![".md", ".markdown"],
+                        _ => vec![],
+                    }
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect(),
+                    pause_on_exit: ["python", "rscript", "bash", "unzip"].contains(&id),
                 },
             )
         })
@@ -241,6 +298,11 @@ impl Default for Config {
             line_color: theme_color("line_color"),
             link_color: theme_color("link_color"),
             path_color: theme_color("path_color"),
+            mark_color: "#FF55FF".into(),
+            order: Default::default(),
+            directory_order: Default::default(),
+            git_enabled: true,
+            git_max_entries: 4000,
             keys,
             openers,
             defaults: [
@@ -249,6 +311,7 @@ impl Default for Config {
                 (".htm", "firefox"),
                 (".md", "markdown"),
                 (".markdown", "markdown"),
+                (".zip", "unzip"),
                 ("*", "system"),
             ]
             .into_iter()
@@ -285,6 +348,30 @@ fn number(value: &Value, key: &str, low: usize, high: usize) -> Result<usize, St
         .ok_or_else(|| format!("{key}: 应为 {low}..{high} 的整数"))
 }
 impl Config {
+    pub fn order_rank(&self, directory: &Path, name: &str) -> (i8, usize) {
+        let full = directory.to_string_lossy();
+        let base = directory.file_name().unwrap_or_default().to_string_lossy();
+        let rule = self
+            .directory_order
+            .get(full.as_ref())
+            .or_else(|| self.directory_order.get(base.as_ref()));
+        let top = rule.map_or(&self.order.top, |r| &r.top);
+        let bottom = rule.map_or(&self.order.bottom, |r| &r.bottom);
+        let equal = |other: &String| {
+            if cfg!(windows) {
+                other.to_lowercase() == name.to_lowercase()
+            } else {
+                other == name
+            }
+        };
+        if let Some(rank) = top.iter().position(equal) {
+            (-1, rank)
+        } else if let Some(rank) = bottom.iter().position(equal) {
+            (1, rank)
+        } else {
+            (0, 0)
+        }
+    }
     pub fn dashboard_columns(&self, terminal_width: usize) -> usize {
         if terminal_width < 70 {
             0
@@ -318,6 +405,14 @@ impl Config {
         let data: Value = toml::from_str(&text).map_err(|e| e.to_string())?;
         let table = data.as_table().ok_or("配置应为 TOML 表")?;
         let mut conf = Self::default();
+        if let Some(order) = table.get("order").and_then(Value::as_table) {
+            if let Some(top) = order.get("top") {
+                conf.order.top = order_names(top)?;
+            }
+            if let Some(bottom) = order.get("bottom") {
+                conf.order.bottom = order_names(bottom)?;
+            }
+        }
         for (section, values) in table {
             if section == "gui" {
                 continue;
@@ -334,6 +429,9 @@ impl Config {
                 "open_defaults",
                 "extension_colors",
                 "folder_colors",
+                "order",
+                "directory_order",
+                "git",
                 "tmux",
                 "input_method",
                 "links",
@@ -348,6 +446,43 @@ impl Config {
                 .ok_or_else(|| format!("{section}: 应为表"))?;
             for (key, value) in values {
                 match (section.as_str(), key.as_str()) {
+                    ("order", "top") => conf.order.top = order_names(value)?,
+                    ("order", "bottom") => conf.order.bottom = order_names(value)?,
+                    ("directory_order", _) => {
+                        let mut rule = conf.order.clone();
+                        for (field, names) in value
+                            .as_table()
+                            .ok_or("directory_order entry must be a table")?
+                        {
+                            match field.as_str() {
+                                "top" => rule.top = order_names(names)?,
+                                "bottom" => rule.bottom = order_names(names)?,
+                                _ => return Err(format!("Unknown ordering field: {field}")),
+                            }
+                        }
+                        let path = expand_home(key);
+                        let key = if path.is_absolute() {
+                            fs::canonicalize(&path)
+                                .unwrap_or(path)
+                                .to_string_lossy()
+                                .into_owned()
+                        } else {
+                            if key.contains(['/', '\\']) {
+                                return Err(
+                                    "Directory rule must be an absolute path or directory name"
+                                        .into(),
+                                );
+                            }
+                            key.clone()
+                        };
+                        conf.directory_order.insert(key, rule);
+                    }
+                    ("git", "enabled") => {
+                        conf.git_enabled = value.as_bool().ok_or("git.enabled must be boolean")?
+                    }
+                    ("git", "max_entries") => {
+                        conf.git_max_entries = number(value, key, 100, 20000)?
+                    }
                     ("browser", "show_hidden") => {
                         conf.hidden = value.as_bool().ok_or("show_hidden 应为布尔值")?
                     }
@@ -437,6 +572,7 @@ impl Config {
                             "line_color",
                             "link_color",
                             "path_color",
+                            "mark_color",
                         ]
                         .contains(&key.as_str())
                         {
@@ -452,6 +588,7 @@ impl Config {
                             "line_color" => conf.line_color = text,
                             "link_color" => conf.link_color = text,
                             "path_color" => conf.path_color = text,
+                            "mark_color" => conf.mark_color = text,
                             _ => {}
                         }
                     }
@@ -469,6 +606,7 @@ impl Config {
                             terminal: false,
                             copy_path: false,
                             pause_on_exit: false,
+                            extensions: vec![],
                         });
                         for (field, v) in item {
                             match field.as_str() {
@@ -482,6 +620,23 @@ impl Config {
                                 }
                                 "copy_path" => {
                                     opener.copy_path = v.as_bool().ok_or("copy_path 应为布尔值")?;
+                                }
+                                "extensions" => {
+                                    opener.extensions = v
+                                        .as_array()
+                                        .ok_or("extensions must be an array")?
+                                        .iter()
+                                        .map(|x| {
+                                            let extension = string(x, "extension")?.to_lowercase();
+                                            if !extension.starts_with('.')
+                                                || extension.len() < 2
+                                                || extension.contains(['/', '\\', '\0'])
+                                            {
+                                                return Err("Extension must be .suffix".into());
+                                            }
+                                            Ok(extension)
+                                        })
+                                        .collect::<Result<_, String>>()?;
                                 }
                                 "command" => {
                                     opener.command = v

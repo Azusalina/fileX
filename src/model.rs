@@ -19,6 +19,9 @@ pub struct Node {
     pub dir: bool,
     pub link: bool,
     pub links: u64,
+    pub create_entry: bool,
+    pub marked: bool,
+    pub git: crate::git_status::State,
     pub expanded: bool,
     pub children: Vec<NodeRef>,
     pub error: String,
@@ -32,6 +35,9 @@ impl Node {
             dir,
             link,
             links: 1,
+            create_entry: false,
+            marked: false,
+            git: Default::default(),
             expanded: false,
             children: vec![],
             error: String::new(),
@@ -39,7 +45,21 @@ impl Node {
         }))
     }
     pub fn label(&self, width: usize) -> (String, Option<usize>) {
-        let prefix = if self.dir {
+        if self.create_entry {
+            return (clip("+", width), None);
+        }
+        if self.marked {
+            let (text, link) = self.base_label(width.saturating_sub(4));
+            let edge = crate::terminal_profile::label("│", "|");
+            return (
+                format!("{edge} {text} {edge}"),
+                link.map(|i| i + edge.len() + 1),
+            );
+        }
+        self.base_label(width)
+    }
+    fn base_label(&self, width: usize) -> (String, Option<usize>) {
+        let arrow = if self.dir {
             if crate::terminal_profile::get().ascii {
                 if self.expanded { "v " } else { "> " }
             } else if self.expanded {
@@ -49,6 +69,19 @@ impl Node {
             }
         } else {
             crate::terminal_profile::label("· ", ". ")
+        };
+        let prefix = if self.git != crate::git_status::State::None {
+            format!(
+                "{}{} ",
+                if self.dir {
+                    arrow.trim()
+                } else {
+                    crate::terminal_profile::label("▸", ">")
+                },
+                self.git.marker(crate::terminal_profile::get().ascii)
+            )
+        } else {
+            arrow.to_owned()
         };
         let mut suffix = if self.link {
             crate::terminal_profile::label(" ↗", " @").to_owned()
@@ -140,7 +173,7 @@ pub fn clip(text: &str, width: usize) -> String {
 }
 #[derive(Eq, PartialEq)]
 struct Entry {
-    key: (bool, i64, String),
+    key: (i8, usize, bool, i64, String),
     path: PathBuf,
     dir: bool,
     link: bool,
@@ -163,6 +196,8 @@ pub struct Browser {
     pub results: Vec<PathBuf>,
     pub search_key: Option<(String, PathBuf, bool)>,
     pub search_summary: String,
+    pub destination_mode: bool,
+    git_cache: crate::git_status::Cache,
 }
 impl Browser {
     pub fn new(path: &Path, conf: Config) -> Result<Self, String> {
@@ -178,6 +213,8 @@ impl Browser {
             results: vec![],
             search_key: None,
             search_summary: String::new(),
+            destination_mode: false,
+            git_cache: Default::default(),
         };
         browser.expand(&root, None);
         Ok(browser)
@@ -230,6 +267,10 @@ impl Browser {
             .map(|n| (n.borrow().path.clone(), n.clone()))
             .collect();
         let path = node.borrow().path.clone();
+        if self.conf.git_enabled {
+            self.git_cache.request(&path, self.conf.git_max_entries);
+        }
+        let directory = path.clone();
         let mut heap = BinaryHeap::new();
         let mut pinned = vec![];
         let mut count: usize = 0;
@@ -258,7 +299,16 @@ impl Browser {
                 _ => 0,
             };
             let entry = Entry {
-                key: (self.conf.dirs_first && !dir, metric, name.to_lowercase()),
+                key: {
+                    let (group, rank) = self.conf.order_rank(&directory, &name);
+                    (
+                        group,
+                        rank,
+                        self.conf.dirs_first && !dir,
+                        metric,
+                        name.to_lowercase(),
+                    )
+                },
                 path,
                 dir,
                 link,
@@ -305,11 +355,50 @@ impl Browser {
         }
         let mut n = node.borrow_mut();
         n.omitted = count.saturating_sub(children.len());
+        if self.destination_mode {
+            let entry = Node::new(n.path.clone(), Rc::downgrade(node), false, false);
+            entry.borrow_mut().create_entry = true;
+            children.push(entry);
+        }
         n.children = children;
         n.expanded = true;
         n.error.clear();
     }
+    pub fn set_destination_mode(&mut self, enabled: bool) {
+        self.destination_mode = enabled;
+        if self.selected.borrow().create_entry {
+            let parent = self.selected.borrow().parent.upgrade();
+            if let Some(parent) = parent {
+                self.selected = parent;
+            }
+        }
+        let mut stack = vec![self.root.clone()];
+        while let Some(node) = stack.pop() {
+            let mut n = node.borrow_mut();
+            n.children.retain(|c| !c.borrow().create_entry);
+            stack.extend(n.children.iter().cloned());
+            if enabled && n.dir && n.expanded {
+                let entry = Node::new(n.path.clone(), Rc::downgrade(&node), false, false);
+                entry.borrow_mut().create_entry = true;
+                n.children.push(entry);
+            }
+        }
+    }
+    pub fn update_git(&mut self) {
+        self.git_cache.poll();
+        let mut stack = vec![self.root.clone()];
+        while let Some(node) = stack.pop() {
+            let mut n = node.borrow_mut();
+            n.git = if self.conf.git_enabled && !n.create_entry {
+                self.git_cache.state(&n.path)
+            } else {
+                Default::default()
+            };
+            stack.extend(n.children.iter().cloned());
+        }
+    }
     pub fn refresh(&mut self) {
+        self.git_cache.clear();
         self.search_key = None;
         let selected = self.selected.borrow().path.clone();
         let mut stack = vec![self.root.clone()];
@@ -638,7 +727,7 @@ impl Browser {
     }
     pub fn target(&self) -> PathBuf {
         let node = self.selected.borrow();
-        if node.dir {
+        if node.dir || node.create_entry {
             node.path.clone()
         } else {
             node.path.parent().unwrap_or(Path::new("/")).to_path_buf()
@@ -713,6 +802,8 @@ impl Layout {
     }
     pub fn new(browser: &Browser) -> Self {
         let nodes = browser.visible();
+        let boxed = nodes.iter().any(|n| n.borrow().marked);
+        let row_spacing = browser.conf.row_spacing.max(if boxed { 3 } else { 1 });
         let mut depths = HashMap::new();
         let mut widths: Vec<usize> = vec![];
         let mut labels = HashMap::new();
@@ -745,12 +836,12 @@ impl Layout {
                     .map(|c| heights[&(Rc::as_ptr(c) as usize)])
                     .sum()
             } else {
-                browser.conf.row_spacing
+                row_spacing
             };
             heights.insert(Rc::as_ptr(node) as usize, h);
         }
         let mut rows = HashMap::new();
-        rows.insert(Rc::as_ptr(&browser.root) as usize, 0);
+        rows.insert(Rc::as_ptr(&browser.root) as usize, usize::from(boxed));
         let mut items = vec![];
         let mut locations = HashMap::new();
         let mut width = 0;
@@ -761,7 +852,7 @@ impl Layout {
             let y = rows[&id];
             let (label, link_start) = labels.remove(&id).unwrap();
             width = width.max(x + label.width());
-            height = height.max(y + 1);
+            height = height.max(y + if boxed { 2 } else { 1 });
             locations.insert(id, (x, y, label.width()));
             {
                 let n = node.borrow();
