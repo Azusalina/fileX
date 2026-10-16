@@ -59,6 +59,9 @@ fn rename_io(source: &Path, dest: &Path) -> io::Result<()> {
         Ok(())
     }
 }
+pub fn replace_staged(source: &Path, dest: &Path) -> Result<(), String> {
+    fs::rename(source, dest).map_err(err)
+}
 pub fn name_valid(name: &str) -> Result<(), String> {
     if name.is_empty() || [".", ".."].contains(&name) || name.contains('/') || name.contains('\0') {
         Err(label("请输入单个有效名称", "Enter one valid name").into())

@@ -26,6 +26,22 @@ class ExplorerTests(unittest.TestCase):
     def find(self, name):
         return next(n for n in self.browser.visible() if n.path.name == name)
 
+    def test_other_folders_order_selector(self):
+        (self.root / "index.html").touch()
+        (self.root / "notes.txt").touch()
+        config = Config()
+        config.order = {"top": ["notes.txt"]}
+        config.directory_order = {str(self.root): {
+            "top": ["index.html", "a1"], "bottom": ["<other-folders>"]}}
+        browser = Browser(self.root, config)
+        self.assertEqual([n.path.name for n in browser.root.children],
+                         ["index.html", "a1", "notes.txt", "a2"])
+        config.directory_order[str(self.root)] = {
+            "top": ["<other-folders>"], "bottom": ["a1"]}
+        browser = Browser(self.root, config)
+        self.assertEqual([n.path.name for n in browser.root.children],
+                         ["a2", "index.html", "notes.txt", "a1"])
+
     def test_lazy_multiple_branches_and_lines(self):
         self.assertEqual(len(self.browser.visible()), 3)
         self.browser.expand(self.find("a1"))

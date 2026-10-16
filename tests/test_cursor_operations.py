@@ -6,6 +6,75 @@ from test_runtime_fixes import ROOT, Terminal
 
 
 class CursorOperationsTests(unittest.TestCase):
+    def test_replace_enter_cancel_and_typed_destination(self):
+        with tempfile.TemporaryDirectory(prefix='filex-replace-pty-') as d:
+            root = Path(d)
+            source = root/'source.txt'; source.write_text('new')
+            target = root/'target'; target.mkdir()
+            existing = target/'source.txt'; existing.write_text('old')
+            config = root/'.settings.conf'
+            config.write_text('[input_method]\nauto_english=false\n[terminal]\nmode="tty"\ncharset="ascii"\n')
+            terminal = Terminal([str(ROOT/'filex.sh'), str(root), '--config', str(config)], root)
+            try:
+                terminal.until(lambda: b'Space:mark' in terminal.output)
+                terminal.send('\x06source.txt\rc')
+                terminal.send('t\x15'+str(target)+'\r')
+                terminal.until(lambda: b'Replace existing file:' in terminal.output)
+                self.assertEqual(existing.read_text(), 'old')
+                terminal.send('\x1b')
+                self.assertEqual(existing.read_text(), 'old')
+                terminal.send('t\x15'+str(target)+'\r')
+                terminal.send('\r')
+                terminal.until(lambda: existing.read_text() == 'new')
+                self.assertTrue(source.exists())
+                terminal.send('\x06\x15source.txt\rm')
+                renamed = root/'renamed.txt'
+                terminal.send('t\x15'+str(renamed)+'\r')
+                terminal.until(renamed.exists)
+                self.assertEqual(renamed.read_text(), 'new')
+                self.assertFalse(source.exists())
+                terminal.send('Q')
+                self.assertEqual(terminal.process.wait(timeout=5), 0)
+            finally:
+                terminal.close()
+
+    def test_cursor_replace_file_and_batch_cancel_before_any_write(self):
+        with tempfile.TemporaryDirectory(prefix='filex-replace-batch-') as d:
+            root = Path(d)
+            a = root/'alpha.txt'; a.write_text('new-a')
+            b = root/'beta.txt'; b.write_text('new-b')
+            dest = root/'target'; dest.mkdir()
+            (dest/a.name).write_text('old-a'); (dest/b.name).write_text('old-b')
+            direct = root/'direct.txt'; direct.write_text('direct-old')
+            config = root/'.settings.conf'
+            config.write_text('[input_method]\nauto_english=false\n[terminal]\nmode="tty"\ncharset="ascii"\n')
+            terminal = Terminal([str(ROOT/'filex.sh'), str(root), '--config', str(config)], root)
+            try:
+                terminal.until(lambda: b'Space:mark' in terminal.output)
+                terminal.send('\x06alpha.txt\r ')
+                terminal.send('\x06\x15beta.txt\r c')
+                terminal.send('g\x15'+str(dest)+'\r')
+                terminal.send('\r')
+                terminal.until(lambda: b'Replace existing file:' in terminal.output)
+                terminal.send('\r')
+                terminal.send('\x1b')
+                self.assertEqual((dest/a.name).read_text(), 'old-a')
+                self.assertEqual((dest/b.name).read_text(), 'old-b')
+                terminal.send('\x1b')  # cancel transfer
+                terminal.send('\x1b')  # clear marks
+                terminal.send('g\x15'+str(root)+'\r')
+                terminal.send('\x06\x15alpha.txt\rc')
+                terminal.send('\x06\x15direct.txt\r')
+                terminal.send('\r')  # selected file is the destination
+                self.assertEqual(direct.read_text(), 'direct-old')
+                terminal.send('\r')
+                terminal.until(lambda: direct.read_text() == 'new-a')
+                self.assertTrue(a.exists())
+                terminal.send('Q')
+                self.assertEqual(terminal.process.wait(timeout=5), 0)
+            finally:
+                terminal.close()
+
     def test_multiple_sources_plus_creation_and_mid_name_edit(self):
         with tempfile.TemporaryDirectory(prefix='filex-cursor-') as d:
             root = Path(d)

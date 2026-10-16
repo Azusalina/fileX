@@ -32,9 +32,10 @@ class DualPaneTests(unittest.TestCase):
             terminal.send('\x1b[D\x1b[D\x1b[D\x1b[C') # chosen -> expand -> seed -> chosen
             terminal.send('\t\x1b[Cc\r')
             terminal.until(lambda:(dest/'copy.txt').exists()); self.assertEqual((dest/'copy.txt').read_text(),'copied payload')
-            terminal.send('\tc\r');terminal.until(lambda:'目标已存在'.encode() in terminal.output)
+            terminal.send('\tc\r');terminal.until(lambda:b'Replace existing file:' in terminal.output)
             self.assertEqual(source.read_text(),'copied payload');self.assertEqual((dest/'copy.txt').read_text(),'copied payload')
-            terminal.send('c\x1b') # cancel without transfer
+            terminal.send('\x1b') # cancel replacement confirmation
+            terminal.send('\x1b') # cancel transfer, keep marks
             terminal.send('\t\x1b[Bm\r');terminal.until(lambda:(dest/'move.txt').exists() and not moved.exists())
             self.assertEqual((dest/'move.txt').read_text(),'moved payload')
             terminal.send('\x1b[D') # destination stays selected / expanded after transfer

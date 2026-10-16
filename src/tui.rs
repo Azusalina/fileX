@@ -657,7 +657,9 @@ impl Ui {
             other.browser.set_destination_mode(true);
             self.switch_pane();
         }
-        self.message = "Choose a destination folder with arrows; Enter executes; + creates a folder; Esc cancels".into();
+        self.message =
+            "Choose destination: arrows + Enter; t types a path; + creates folder; Esc cancels"
+                .into();
         Ok(())
     }
     fn cancel_transfer(&mut self) {
@@ -699,16 +701,51 @@ impl Ui {
         if self.pane.browser.selected.borrow().create_entry {
             return self.create_destination();
         }
-        let directory = self.selection_path();
-        if !self.pane.browser.selected.borrow().dir || !directory.is_dir() {
-            return Err("Choose a folder (or + to create one)".into());
+        let target = self.selection_path();
+        self.transfer_to(&target)
+    }
+    fn transfer_path(&mut self) -> Result<(), String> {
+        let initial = self.pane.browser.target().to_string_lossy().into_owned();
+        let Some(value) = self.prompt("Destination path (file or directory)", &initial)? else {
+            return Ok(());
+        };
+        if value.is_empty() {
+            return Ok(());
         }
+        let source = self
+            .pending
+            .as_ref()
+            .ok_or("No pending operation")?
+            .sources
+            .first()
+            .ok_or("No pending items")?;
+        let target = files::destination(source, &value);
+        self.transfer_to(&target)
+    }
+    fn transfer_to(&mut self, directory: &Path) -> Result<(), String> {
         let pending = self.pending.as_ref().ok_or("No pending operation")?;
-        let plan = crate::transfer::plan(&pending.sources, &directory)?;
+        let plan = crate::transfer::plan_to(&pending.sources, directory)?;
         let moving = pending.moving;
         let total = plan.len();
-        for (index, (source, destination)) in plan.into_iter().enumerate() {
-            if let Err(error) = files::transfer(&source, &destination, moving) {
+        let replacements: Vec<bool> = plan
+            .iter()
+            .map(|(source, dest)| crate::transfer::validate_target(source, dest))
+            .collect::<Result<_, _>>()?;
+        for ((_, destination), replace) in plan.iter().zip(&replacements) {
+            if *replace
+                && !self.confirm(&format!(
+                    "Replace existing file: {}",
+                    clean(&destination.to_string_lossy())
+                ))?
+            {
+                self.message = "Replacement cancelled; choose destination or press Esc".into();
+                return Ok(());
+            }
+        }
+        for (index, ((source, destination), replace)) in
+            plan.into_iter().zip(replacements).enumerate()
+        {
+            if let Err(error) = crate::transfer::execute(&source, &destination, moving, replace) {
                 self.refresh_panes();
                 return Err(format!(
                     "Completed {index}/{total}; remaining items kept pending: {error}"
@@ -987,7 +1024,7 @@ impl Ui {
         )?;
         let footer = if let Some(pending) = &self.pending {
             format!(
-                "{} {} items: arrows choose folder | Enter execute | + create folder | Esc cancel",
+                "{} {} items: arrows choose | Enter execute | t path | + folder | Esc cancel",
                 if pending.moving { "MOVE" } else { "COPY" },
                 pending.sources.len()
             )
@@ -1580,6 +1617,10 @@ impl Ui {
                 self.commit_transfer()?;
                 return Ok(false);
             }
+            if key == "t" {
+                self.transfer_path()?;
+                return Ok(false);
+            }
             if key == "+" {
                 self.create_destination()?;
                 return Ok(false);
@@ -1781,6 +1822,24 @@ impl Ui {
                 self.pane.browser.conf.hidden = !self.pane.browser.conf.hidden;
                 self.pane.browser.refresh()
             }
+            "run_background" => {
+                let directory = self.selection_path();
+                if !directory.is_dir() {
+                    return Err("Select a folder to run a background command".into());
+                }
+                if let Some(command) = self.prompt(
+                    label("在此目录后台执行命令", "Run background command in folder"),
+                    "",
+                )? && !command.trim().is_empty()
+                {
+                    let job = crate::jobs::start(&directory, &command)?;
+                    self.message = format!(
+                        "Started PID {} | log: {}",
+                        job.pid,
+                        clean(&job.log.to_string_lossy())
+                    );
+                }
+            }
             "copy_path" => {
                 let path = self.selection_path();
                 self.clipboard = std::path::absolute(&path)
@@ -1903,7 +1962,7 @@ impl Ui {
                     .collect::<Vec<_>>()
                     .join("\n");
                 if terminal_profile::get().ascii {
-                    text.push_str("\n\nUp/Down (k/j): all visible peers at the same depth; wrap around.\nRight (l): expand / enter child; Left: parent (mirrored on right pane).\nh collapse; E/C expand/collapse all; . hidden files; f focus root.\na / Ctrl+N new file; A new folder (Ctrl+Shift+N may equal Ctrl+N on TTY).\nr rename; c/m copy/move; Delete/D trash, Enter again confirms, Esc cancels.\ny / Ctrl+Alt+C copy absolute path; Ctrl+V paste it in input prompts.\nPaths use the Wayland clipboard and an internal clipboard.\nx exit to selected folder (file: parent); Q / Ctrl+C quit.\nEnter expands folders (cursor stays); files: open with. w menu; o default; p preview; q dashboard; I link information.\nHeadless defaults: Nano, Neovim, Vim, then built-in preview; no automatic script execution.\nPython / Rscript / Bash can be explicitly selected to run scripts.\nCtrl+F / / search; n/N matches; g / Ctrl+L change root.\nCtrl+R / F5 refresh; comma reload config; [ / ] dashboard width.\nv toggle mirrored panes; Tab switch; c/m switch to the other pane to choose a destination.\nH/L pan; PgUp/PgDn page peers; Ctrl+U clear input.\nTerminal openers reuse an idle pane on the right in tmux.\nSpace marks/unmarks files/folders; Esc clears marks. c/m: choose destination with arrows, Enter executes, + creates folder; Esc cancels. Existing targets are never overwritten. Rename prompts: Left/Right/Home/End, Delete/Backspace edit at cursor.");
+                    text.push_str("\n\nUp/Down (k/j): all visible peers at the same depth; wrap around.\nRight (l): expand / enter child; Left: parent (mirrored on right pane).\nh collapse; E/C expand/collapse all; . hidden files; f focus root.\na / Ctrl+N new file; A new folder (Ctrl+Shift+N may equal Ctrl+N on TTY).\nr rename; c/m copy/move; Delete/D trash, Enter again confirms, Esc cancels.\ny / Ctrl+Alt+C copy absolute path; Ctrl+V paste it in input prompts.\nPaths use the Wayland clipboard and an internal clipboard.\nx exit to selected folder (file: parent); Q / Ctrl+C quit.\n! run a shell command in the selected folder in background (PID/log shown).\nEnter expands folders (cursor stays); files: open with. w menu; o default; p preview; q dashboard; I link information.\nHeadless defaults: Nano, Neovim, Vim, then built-in preview; no automatic script execution.\nPython / Rscript / Bash can be explicitly selected to run scripts.\nCtrl+F / / search; n/N matches; g / Ctrl+L change root.\nCtrl+R / F5 refresh; comma reload config; [ / ] dashboard width.\nv toggle mirrored panes; Tab switch; c/m switch to the other pane to choose a destination.\nH/L pan; PgUp/PgDn page peers; Ctrl+U clear input.\nTerminal openers reuse an idle pane on the right in tmux.\nSpace marks/unmarks files/folders; Esc clears marks. c/m: choose destination with arrows, Enter executes, + creates folder; t types a destination file/directory path; Esc cancels. Existing regular files require Enter confirmation to replace; folders/links are not replaced. Rename prompts: Left/Right/Home/End, Delete/Backspace edit at cursor.");
                 } else {
                     text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C / y 复制选中项目的绝对路径；输入框 Ctrl+V 粘贴\nf 当前目录设为根并刷新\nEnter 展开目录（光标保留）/ 文件选择打开方式 · w 打开菜单 · o 默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nv 双栏开关 · Tab 切换操作侧 · 右栏 ← 展开 / → 父级\n双栏 c/m 切到另一侧，方向键选目标目录，Enter 执行 / Esc 取消\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\nSpace 多选，Esc 清空；c/m 后方向键选目标目录，Enter 执行，+ 新建目录，Esc 取消。不覆盖已有目标。输入框支持左右/Home/End及光标处增删。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
                 }
@@ -2217,7 +2276,8 @@ mod dual_tests {
         fs::write(&a, "a").unwrap();
         fs::write(&b, "b").unwrap();
         let dest = f.0.join("branch0");
-        fs::write(dest.join("beta"), "original").unwrap();
+        fs::create_dir(dest.join("beta")).unwrap();
+        fs::write(dest.join("beta/keep"), "original").unwrap();
         ui.marked.extend([a.clone(), b.clone()]);
         ui.action("c").unwrap();
         ui.pane.browser.selected = ui
@@ -2229,7 +2289,10 @@ mod dual_tests {
             .unwrap();
         assert!(ui.action("enter").is_err());
         assert!(!dest.join("alpha").exists());
-        assert_eq!(fs::read_to_string(dest.join("beta")).unwrap(), "original");
+        assert_eq!(
+            fs::read_to_string(dest.join("beta/keep")).unwrap(),
+            "original"
+        );
         ui.action("escape").unwrap();
         assert!(ui.pending.is_none());
         assert_eq!(ui.marked.len(), 2);
@@ -2364,8 +2427,60 @@ mod dual_tests {
         let key = f.0.file_name().unwrap().to_string_lossy();
         fs::write(&path,format!("[order]\ntop=['index.html']\nbottom=['node_modules']\n[directory_order.'{key}']\ntop=['ordering.conf']\nbottom=[]\n")).unwrap();
         let conf = Config::load(&path).unwrap();
-        assert_eq!(conf.order_rank(&f.0, "ordering.conf"), (-1, 0));
-        assert_eq!(conf.order_rank(&f.0, "node_modules"), (0, 0));
-        assert_eq!(conf.order_rank(Path::new("/other"), "index.html"), (-1, 0));
+        assert_eq!(conf.order_rank(&f.0, "ordering.conf", false), (-1, 0));
+        assert_eq!(conf.order_rank(&f.0, "node_modules", true), (0, 0));
+        assert_eq!(
+            conf.order_rank(Path::new("/other"), "index.html", false),
+            (-1, 0)
+        );
+    }
+    #[test]
+    fn other_folders_selector_respects_explicit_names_and_directory_scope() {
+        let f = Fixture::new();
+        fs::write(f.0.join("index.html"), "index").unwrap();
+        fs::write(f.0.join("notes.txt"), "notes").unwrap();
+        fs::create_dir(f.0.join("node_modules")).unwrap();
+        let key = f.0.to_string_lossy();
+        let path = f.0.join("ordering.conf");
+        fs::write(&path, format!("[order]\ntop=['notes.txt']\n[directory_order.'{key}']\ntop=['index.html', 'branch0']\nbottom=['<other-folders>', 'node_modules']\n")).unwrap();
+        let conf = Config::load(&path).unwrap();
+        assert_eq!(conf.order_rank(&f.0, "branch0", true), (-1, 1));
+        assert_eq!(conf.order_rank(&f.0, "branch1", true), (1, 0));
+        assert_eq!(conf.order_rank(&f.0, "node_modules", true), (1, 1));
+        assert_eq!(conf.order_rank(&f.0, "notes.txt", false), (0, 0));
+        assert_eq!(conf.order_rank(&f.0, "link", false), (0, 0));
+        assert_eq!(
+            conf.order_rank(&f.0.join("branch1"), "notes.txt", false),
+            (-1, 0)
+        );
+        let browser = Browser::new(&f.0, conf.clone()).unwrap();
+        let names: Vec<_> = browser
+            .root
+            .borrow()
+            .children
+            .iter()
+            .map(|n| {
+                n.borrow()
+                    .path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(&names[..2], &["index.html", "branch0"]);
+        assert!(
+            names.iter().position(|n| n == "notes.txt") < names.iter().position(|n| n == "branch1")
+        );
+        assert_eq!(names.last().unwrap(), "node_modules");
+        fs::write(
+            &path,
+            "[order]\ntop=['<other-folders>']\nbottom=['branch0']\n",
+        )
+        .unwrap();
+        let conf = Config::load(&path).unwrap();
+        assert_eq!(conf.order_rank(&f.0, "branch0", true), (1, 0));
+        assert_eq!(conf.order_rank(&f.0, "branch1", true), (-1, 0));
+        assert_eq!(conf.order_rank(&f.0, "notes.txt", false), (0, 0));
     }
 }

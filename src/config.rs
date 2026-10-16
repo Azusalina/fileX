@@ -195,6 +195,7 @@ impl Default for Config {
             ("copy_path", "Ctrl+Alt+c"),
             ("move", "m"),
             ("trash", "D"),
+            ("run_background", "!"),
             ("help", "?"),
             ("config", ","),
             ("toggle_dual", "v"),
@@ -348,7 +349,7 @@ fn number(value: &Value, key: &str, low: usize, high: usize) -> Result<usize, St
         .ok_or_else(|| format!("{key}: 应为 {low}..{high} 的整数"))
 }
 impl Config {
-    pub fn order_rank(&self, directory: &Path, name: &str) -> (i8, usize) {
+    pub fn order_rank(&self, directory: &Path, name: &str, is_dir: bool) -> (i8, usize) {
         let full = directory.to_string_lossy();
         let base = directory.file_name().unwrap_or_default().to_string_lossy();
         let rule = self
@@ -364,9 +365,25 @@ impl Config {
                 other == name
             }
         };
-        if let Some(rank) = top.iter().position(equal) {
+        if let Some(rank) = top
+            .iter()
+            .position(|item| item != "<other-folders>" && equal(item))
+        {
             (-1, rank)
-        } else if let Some(rank) = bottom.iter().position(equal) {
+        } else if let Some(rank) = bottom
+            .iter()
+            .position(|item| item != "<other-folders>" && equal(item))
+        {
+            (1, rank)
+        } else if let Some(rank) = top
+            .iter()
+            .position(|item| is_dir && item == "<other-folders>")
+        {
+            (-1, rank)
+        } else if let Some(rank) = bottom
+            .iter()
+            .position(|item| is_dir && item == "<other-folders>")
+        {
             (1, rank)
         } else {
             (0, 0)

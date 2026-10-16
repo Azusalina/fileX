@@ -300,7 +300,7 @@ impl Browser {
             };
             let entry = Entry {
                 key: {
-                    let (group, rank) = self.conf.order_rank(&directory, &name);
+                    let (group, rank) = self.conf.order_rank(&directory, &name, dir);
                     (
                         group,
                         rank,

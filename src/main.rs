@@ -9,6 +9,7 @@ mod edit;
 mod files;
 mod git_status;
 mod input;
+mod jobs;
 mod links;
 mod model;
 mod terminal_host;

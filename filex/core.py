@@ -131,7 +131,17 @@ class Browser:
                 value = name.casefold() if self.config.sort == "name" else -size if self.config.sort == "size" else -modified
                 rule = {**self.config.order, **self.config.directory_order.get(node.path.name, {}), **self.config.directory_order.get(str(node.path), {})}
                 top, bottom = rule.get("top", []), rule.get("bottom", [])
-                priority = (-1, top.index(name)) if name in top else (1, bottom.index(name)) if name in bottom else (0, 0)
+                selector = "<other-folders>"
+                if name != selector and name in top:
+                    priority = (-1, top.index(name))
+                elif name != selector and name in bottom:
+                    priority = (1, bottom.index(name))
+                elif directory and selector in top:
+                    priority = (-1, top.index(selector))
+                elif directory and selector in bottom:
+                    priority = (1, bottom.index(selector))
+                else:
+                    priority = (0, 0)
                 return (*priority, not directory if self.config.directories_first else False, value, name)
             entries.sort(key=key)
             old = {child.path: child for child in node.children}

@@ -717,3 +717,21 @@ scripts/distro-tty-smoke.py 在隔离 root 真实 PTY 中验证 Python3 运行�
 来源：[Git status porcelain v2](https://git-scm.com/docs/git-status)、[Git ls-files](https://git-scm.com/docs/git-ls-files)。Windows 仍以交叉编译验证为界，未在 Windows 11 原生实测。
 
 验证：两版各 38 项 Rust 测试在 Linux 通过；fileX 全量 66 项 Python／PTY 回归通过，最后的未跟踪忽略项改进另经 Git 单元测试及 3 项光标／菜单／Git 终端测试复核。临时 Git 仓库验证本地状态、Unicode 重命名、忽略项、上游四种同步状态、输出条目上限及索引字节不变。Windows release 与测试 exe 已交叉编译，未执行 Windows 原生测试。
+
+### 未声明子目录的排序选择器
+
+`top` / `bottom` 支持保留标记 `"<other-folders>"`，选择没有出现在当前有效 top/bottom 名称列表中的所有直接子目录；显式名称先匹配，再匹配目录组。组内沿用 sort 排序，其他普通项仍遵循 directories_first/sort。符号链接不归入目录组，隐藏目录在开启显示时参与；规则不递归。标记同时存在两组时 top 优先，与名称重复时的既有优先级一致。特殊标记为保留名称，不能用来按字面排序同名普通文件。Rust 和兼容 Python 排序共用语义，无新增逐项文件系统查询。
+
+本次验证：每个项目 39 项 Rust 测试通过；新增未声明目录选择器覆盖目录范围、显式项优先及真实子项顺序；Linux Python 回归 67 项通过（配置生成检查在 release 构建完成后复测）。Windows release 和测试程序交叉编译通过，未做 Windows 实机运行验证。
+
+### 复制／移动的显式覆盖与路径输入
+
+当前传输模式新增 `t` 地址输入，单项可指定文件路径以同时改名，多项必须指定目录。光标亦可直接选择已有普通文件作为替换目标。整批先校验，每个已有文件再 Enter 确认；Esc 取消本次提交，保留待操作项。目录与符号链接不替换，拒绝自身及同 inode 的硬链接。覆盖采用在目标旁新建临时目录、完整复制、重命名替换的方式，不先截断旧内容；移动在替换成功后删除源。目标文件的其他硬链接仍指向旧内容。不是整批事务：运行中 I/O 失败时保留已完成结果并报告进度，剩余项待操作；移动若替换成功但源删除失败，会报告并保留源。大文件替换需要额外磁盘空间。Linux 使用 rename，Windows 使用 MoveFileExW(REPLACE_EXISTING)，Windows 实机行为待验证。旧历史中的不覆盖说明已由本节替代；底层默认 transfer 仍禁止覆盖，仅已确认的 TUI 传输使用替换接口。
+
+覆盖功能验证：两个产品各 42 项 Rust 测试通过；69 项 Linux Python 回归（其中旧双栏冲突提示断言更新为确认提示后单独复测通过）。新增 PTY 验证按 Enter 前内容不变、Esc 取消、输入完整目标路径移动改名、直接光标选文件覆盖、多选最后一项取消时整批未开始写入。Windows release／测试程序已交叉编译，未做 Windows 实机运行。
+
+### 文件夹后台命令
+
+`run_background` 默认快捷键 `!`；只对当前选中文件夹运行，普通文件拒绝，复制／移动目标选择期间不可触发。用户明确输入 shell 命令后 Enter 执行，支持 shell 管道与重定向；不自动执行目录内脚本，不加载交互式 shell 配置。stdin=null，stdout/stderr 直接写独立日志，不占用终端或在内存缓存输出。Unix setsid，Windows DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP；启动失败显示原因，等待线程回收子进程并在日志追加退出状态。退出 filex 后子进程继续，若退出时任务仍在运行，其后不会追加监控退出状态，但进程输出仍写日志。日志不自动删除；日志目录见 README。后台任务自身的内存不计入 filex，长期服务需自行停止和管理。
+
+后台命令验证：两个产品分别 43 项 Rust 测试通过；71 项 Linux Python 回归全通过，含目录带引号／中文、正确 cwd、输出日志、退出 filex 后完成、取消与普通文件拒绝、自定义热键。实际 Visualize-sheet 的只读树输出确认 launch.sh 在第一项；未启动该项目服务。Windows release 和测试程序交叉编译通过，尚未 Windows 实机验证。

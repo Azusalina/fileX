@@ -71,7 +71,7 @@ sudo apt update && sudo apt install build-essential python3 libglib2.0-bin nano 
 | `Ctrl+R` / `F5` / `Ctrl+F5`，`,` | 刷新目录、重载配置 |
 | `?`，`Q` | 帮助、退出（小写 q 用于 Dashboard） |
 
-`Space` 标记／取消标记文件或目录，显示亮洋红方框，可跨目录、跨双栏选择；`Esc` 清空多选。`c/m` 后用方向键选择目标 **folder**，按 `Enter` 复制／移动整批项目；双栏时自动切到另一侧。此时展开目录的末尾有可选 `+`，选中后 Enter（或直接按 `+`）输入新目录名，创建后选中新目录，再 Enter 执行。`g` 可输入目标根目录，`Esc` 取消待执行操作并保留标记，再按一次清空标记。同名目标、批内重名或目录复制到自身内部会拒绝执行；父目录与其子项同时选中时只处理父目录一次。`Delete/D` 同样支持批量回收站删除，再按 Enter 确认。重命名仅作用于当前光标项目。
+`Space` 标记／取消标记文件或目录，显示亮洋红方框，可跨目录、跨双栏选择；`Esc` 清空多选。`c/m` 后用方向键选择目标 **folder**，按 `Enter` 复制／移动整批项目；双栏时自动切到另一侧。此时展开目录的末尾有可选 `+`，选中后 Enter（或直接按 `+`）输入新目录名，创建后选中新目录，再 Enter 执行。`g` 可输入目标根目录，`Esc` 取消待执行操作并保留标记，再按一次清空标记。同名普通文件需再次 Enter 确认替换；目录／链接冲突、批内重名或目录复制到自身内部会拒绝执行；父目录与其子项同时选中时只处理父目录一次。`Delete/D` 同样支持批量回收站删除，再按 Enter 确认。重命名仅作用于当前光标项目。
 
 `H/L` 横移，PgUp/PgDn 同层级循环翻页，Home/End 选择首末节点；重命名、创建及路径输入框支持 `←/→` 移动光标、Home/End、光标处插入、Backspace/Delete、Ctrl+U 清空和 Ctrl+V 插入内部路径缓冲。文件树不自动遍历符号链接。
 
@@ -205,7 +205,7 @@ bottom = ["node_modules", "__pycache__"]
 
 [directory_order."~/Documents/site"]
 top = ["index.html", "package.json"]
-bottom = ["node_modules"]
+bottom = ["<other-folders>", "node_modules"]
 ```
 
 `directory_order` 可用实际绝对目录路径（Windows 使用 TOML 单引号，例如 `[directory_order.'C:\work\site']`），或用目录名匹配所有同名目录；绝对路径规则优先，只作用于该目录直接子项。省略字段继承全局，显式 `[]` 清空继承。修改后按 `,` 重读配置。
@@ -213,3 +213,11 @@ bottom = ["node_modules"]
 Git 仓库展开后，树节点箭头附加状态标记并着色：`?` 未跟踪、`M` 未暂存修改、`S` 已暂存、`!` 冲突、`C` 已跟踪且干净但未配置上游、`P` 干净且与本地记录的上游一致、`↑/↓/↕` 分别为领先／落后／分叉（TTY 用 `^/v/D`）。文件名颜色保留，目录汇总子项状态，底部说明当前项目状态。颜色用于提示，字符标记在无色模式也保留。
 
 Git 后台只读扫描，不自动 commit/push/fetch；`P` 不代表已实时查询服务器。F5／Ctrl+F5 更新本地快照；没有 Git 或查询失败时保持普通箭头。`[git] enabled = false` 可关闭，`max_entries` 默认 4000，每个窗口至多缓存 4 个已展开仓库；超出扫描范围不猜测状态。
+
+排序列表中的 `"<other-folders>"` 匹配未在当前有效 top/bottom 中点名的所有直接子目录（不含目录软链接）。上述示例将 index.html、package.json 置顶，普通文件居中，其余子目录沉底，node_modules 最后；也可把该标记放入 top。显式名称优先，同组目录沿用 sort，隐藏目录需开启显示。
+
+复制／移动：按 `c`／`m` 后可用光标选目标目录，或直接选目标文件进行替换；按 `t` 可输入目标地址，Enter 提交。单项支持目录或完整的新文件路径，多选要求已有目标目录；相对路径以源所在目录为基准，支持 `~`。已有普通文件会逐一提示，再按 Enter 确认覆盖，Esc 返回选择状态；全部覆盖确认完成后才开始本批操作。目录／链接冲突不覆盖。`g`／Ctrl+L 仍可输入目录并切换视图，再 Enter 执行。
+
+选中文件夹后按 `!`，输入 `npm start` 等命令并 Enter，即以该目录为工作目录后台运行；Esc 取消输入。启动后显示 PID 和日志路径，关闭 filex 不停止命令。`[keys] run_background = "!"` 可改键。Linux 使用 `$SHELL -c`（默认 `/bin/sh`），日志在 `$XDG_STATE_HOME/filex/jobs` 或 `~/.local/state/filex/jobs`；Windows 使用 CMD，日志在 `%LOCALAPPDATA%\win-filex\jobs`。标准输入关闭，适用于不需要交互输入的命令；退出后仍可从日志看输出，依赖与 PATH 沿用启动 filex 的环境。
+
+Linux 后台任务可用 `kill -- -PID` 停止对应进程组（PID 使用 filex 启动提示中的值）。日志需自行清理；服务能否启动仍取决于该项目依赖和命令自身。
