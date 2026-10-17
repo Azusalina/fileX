@@ -1200,6 +1200,89 @@ impl Ui {
             }
         }
     }
+    fn git_menu(&mut self) -> Result<(), String> {
+        use crate::git_actions::{self, Action};
+        let selected = self.selection_path();
+        let root = git_actions::repository(&selected)?;
+        let actions = [Action::Publish, Action::Add, Action::Commit, Action::Push];
+        let options = [
+            "Add ALL + commit + push",
+            "Add selected file/folder",
+            "Commit staged changes",
+            "Push",
+        ]
+        .into_iter()
+        .map(|name| (None, name.into()))
+        .collect::<Vec<_>>();
+        let Some(index) = self.choose(
+            &format!("Git repository: {}", clean(&root.to_string_lossy())),
+            &options,
+        )?
+        else {
+            return Ok(());
+        };
+        let action = actions[index];
+        let message = if action.needs_message() {
+            let Some(message) = self.prompt("Git commit message", "")? else {
+                return Ok(());
+            };
+            if message.trim().is_empty() {
+                return Ok(());
+            }
+            message
+        } else {
+            String::new()
+        };
+        let commands = git_actions::commands(&root, &selected, action, &message)?;
+        if !self.confirm(&format!(
+            "{} | {}",
+            action.description(),
+            clean(&root.to_string_lossy())
+        ))? {
+            return Ok(());
+        }
+        terminal::disable_raw_mode().map_err(ioerr)?;
+        Guard::leave()?;
+        let mut result = Ok(());
+        for mut command in commands {
+            println!("> {command:?}");
+            match command.status() {
+                Ok(status) if status.success() => {}
+                Ok(status) => {
+                    result = Err(format!("Git stopped: {status}; completed steps are kept"));
+                    break;
+                }
+                Err(error) => {
+                    result = Err(format!("Cannot run git: {error}"));
+                    break;
+                }
+            }
+        }
+        println!(
+            "\n{} - Enter to return to filex",
+            if result.is_ok() {
+                "Git operation completed"
+            } else {
+                "Git operation failed (later steps skipped)"
+            }
+        );
+        terminal::enable_raw_mode().map_err(ioerr)?;
+        loop {
+            match read_key(self.pane.browser.conf.auto_english) {
+                Ok(key) if ["enter", "escape", "\x03"].contains(&key.as_str()) => break,
+                Ok(_) => {}
+                Err(error) => {
+                    result = Err(error);
+                    break;
+                }
+            }
+        }
+        Guard::enter()?;
+        self.refresh_panes();
+        result?;
+        self.message = "Git operation completed; tree status refreshed".into();
+        Ok(())
+    }
     fn open(&mut self, method: &str) -> Result<(), String> {
         let path = self.selection_path();
         let cli = !terminal_profile::get().desktop;
@@ -1822,6 +1905,7 @@ impl Ui {
                 self.pane.browser.conf.hidden = !self.pane.browser.conf.hidden;
                 self.pane.browser.refresh()
             }
+            "git_menu" => self.git_menu()?,
             "run_background" => {
                 let directory = self.selection_path();
                 if !directory.is_dir() {
@@ -1962,7 +2046,7 @@ impl Ui {
                     .collect::<Vec<_>>()
                     .join("\n");
                 if terminal_profile::get().ascii {
-                    text.push_str("\n\nUp/Down (k/j): all visible peers at the same depth; wrap around.\nRight (l): expand / enter child; Left: parent (mirrored on right pane).\nh collapse; E/C expand/collapse all; . hidden files; f focus root.\na / Ctrl+N new file; A new folder (Ctrl+Shift+N may equal Ctrl+N on TTY).\nr rename; c/m copy/move; Delete/D trash, Enter again confirms, Esc cancels.\ny / Ctrl+Alt+C copy absolute path; Ctrl+V paste it in input prompts.\nPaths use the Wayland clipboard and an internal clipboard.\nx exit to selected folder (file: parent); Q / Ctrl+C quit.\n! run a shell command in the selected folder in background (PID/log shown).\nEnter expands folders (cursor stays); files: open with. w menu; o default; p preview; q dashboard; I link information.\nHeadless defaults: Nano, Neovim, Vim, then built-in preview; no automatic script execution.\nPython / Rscript / Bash can be explicitly selected to run scripts.\nCtrl+F / / search; n/N matches; g / Ctrl+L change root.\nCtrl+R / F5 refresh; comma reload config; [ / ] dashboard width.\nv toggle mirrored panes; Tab switch; c/m switch to the other pane to choose a destination.\nH/L pan; PgUp/PgDn page peers; Ctrl+U clear input.\nTerminal openers reuse an idle pane on the right in tmux.\nSpace marks/unmarks files/folders; Esc clears marks. c/m: choose destination with arrows, Enter executes, + creates folder; t types a destination file/directory path; Esc cancels. Existing regular files require Enter confirmation to replace; folders/links are not replaced. Rename prompts: Left/Right/Home/End, Delete/Backspace edit at cursor.");
+                    text.push_str("\n\nUp/Down (k/j): all visible peers at the same depth; wrap around.\nRight (l): expand / enter child; Left: parent (mirrored on right pane).\nh collapse; E/C expand/collapse all; . hidden files; f focus root.\na / Ctrl+N new file; A new folder (Ctrl+Shift+N may equal Ctrl+N on TTY).\nr rename; c/m copy/move; Delete/D trash, Enter again confirms, Esc cancels.\ny / Ctrl+Alt+C copy absolute path; Ctrl+V paste it in input prompts.\nPaths use the Wayland clipboard and an internal clipboard.\nx exit to selected folder (file: parent); Q / Ctrl+C quit.\n! run a shell command in the selected folder in background (PID/log shown).\nG Git menu: add selected / commit staged / push / add ALL+commit+push.\nEnter expands folders (cursor stays); files: open with. w menu; o default; p preview; q dashboard; I link information.\nHeadless defaults: Nano, Neovim, Vim, then built-in preview; no automatic script execution.\nPython / Rscript / Bash can be explicitly selected to run scripts.\nCtrl+F / / search; n/N matches; g / Ctrl+L change root.\nCtrl+R / F5 refresh; comma reload config; [ / ] dashboard width.\nv toggle mirrored panes; Tab switch; c/m switch to the other pane to choose a destination.\nH/L pan; PgUp/PgDn page peers; Ctrl+U clear input.\nTerminal openers reuse an idle pane on the right in tmux.\nSpace marks/unmarks files/folders; Esc clears marks. c/m: choose destination with arrows, Enter executes, + creates folder; t types a destination file/directory path; Esc cancels. Existing regular files require Enter confirmation to replace; folders/links are not replaced. Rename prompts: Left/Right/Home/End, Delete/Backspace edit at cursor.");
                 } else {
                     text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C / y 复制选中项目的绝对路径；输入框 Ctrl+V 粘贴\nf 当前目录设为根并刷新\nEnter 展开目录（光标保留）/ 文件选择打开方式 · w 打开菜单 · o 默认程序\nCtrl+F / / 搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nv 双栏开关 · Tab 切换操作侧 · 右栏 ← 展开 / → 父级\n双栏 c/m 切到另一侧，方向键选目标目录，Enter 执行 / Esc 取消\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\nSpace 多选，Esc 清空；c/m 后方向键选目标目录，Enter 执行，+ 新建目录，Esc 取消。不覆盖已有目标。输入框支持左右/Home/End及光标处增删。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
                 }

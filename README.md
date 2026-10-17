@@ -221,3 +221,5 @@ Git 后台只读扫描，不自动 commit/push/fetch；`P` 不代表已实时查
 选中文件夹后按 `!`，输入 `npm start` 等命令并 Enter，即以该目录为工作目录后台运行；Esc 取消输入。启动后显示 PID 和日志路径，关闭 filex 不停止命令。`[keys] run_background = "!"` 可改键。Linux 使用 `$SHELL -c`（默认 `/bin/sh`），日志在 `$XDG_STATE_HOME/filex/jobs` 或 `~/.local/state/filex/jobs`；Windows 使用 CMD，日志在 `%LOCALAPPDATA%\win-filex\jobs`。标准输入关闭，适用于不需要交互输入的命令；退出后仍可从日志看输出，依赖与 PATH 沿用启动 filex 的环境。
 
 Linux 后台任务可用 `kill -- -PID` 停止对应进程组（PID 使用 filex 启动提示中的值）。日志需自行清理；服务能否启动仍取决于该项目依赖和命令自身。
+
+`G` 打开当前选中项所属仓库的 Git 菜单：一键 `add ALL → commit → push`、只暂存当前文件／目录、提交全部已暂存内容、单独推送。菜单选择后输入提交信息（需要时），再 Enter 确认；Esc 取消。组合流程暂存整个仓库的新增／修改／删除，包含当前视图外的文件；只暂存当前项不受 Space 多选影响。执行时使用当前终端，支持认证和签名提示，完成或失败后 Enter 返回；失败即停止后续步骤，已完成步骤保留。不自动 pull、force push、设置上游或初始化仓库，push 遵循 Git 的 remote/refspec 配置；首次推送可先在终端设置 upstream。`[keys] git_menu = "G"` 可修改。

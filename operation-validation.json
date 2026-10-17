@@ -1,7 +1,7 @@
 {
   "date": "2026-10-16",
-  "rust_shared_tests_per_product": 43,
-  "linux_python_tests": 71,
+  "rust_shared_tests_per_product": 45,
+  "linux_python_tests": 73,
   "linux_pty": "multi-select, cursor destination, virtual + folder creation, Unicode rename cursor, mirrored transfers, TTY regression passed",
   "zip": "Bash unzip Unicode/spaces/quotes, unique output folders, traversal and symlink rejection passed",
   "windows": "release and test executable cross-compiled; native Windows 11 runtime not verified",
@@ -9,5 +9,6 @@
   "directory_order": "global and directory-specific top/bottom; <other-folders> top/bottom with explicit exclusions, direct-child scope, normal files unaffected; Rust model and Python compatibility tested",
   "git": "temporary repositories: staged/modified/untracked/ignored/rename, upstream sync/ahead/behind/diverged; index unchanged; PTY background tip display and F5 refresh passed",
   "replacement": "42 Rust tests per product; PTY selected-file replacement, typed copy/move target, Enter confirmation, Esc cancel, whole batch unchanged when last overwrite is cancelled; dual-pane old conflict assertion updated and rerun",
-  "background_commands": "PTY: selected folder with quotes/Unicode, correct cwd, stdout/stderr logs, survives filex exit, Escape cancel, file rejection, configurable key; Rust exit status log passed"
+  "background_commands": "PTY: selected folder with quotes/Unicode, correct cwd, stdout/stderr logs, survives filex exit, Escape cancel, file rejection, configurable key; Rust exit status log passed",
+  "git_actions": "PTY temporary worktree and local bare remote: cancelled publish leaves index/HEAD unchanged, selected-only add, literal Unicode/quotes/shell syntax commit message, real local push, failed pre-commit skips push, return to TUI verified"
 }

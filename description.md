@@ -735,3 +735,9 @@ scripts/distro-tty-smoke.py 在隔离 root 真实 PTY 中验证 Python3 运行�
 `run_background` 默认快捷键 `!`；只对当前选中文件夹运行，普通文件拒绝，复制／移动目标选择期间不可触发。用户明确输入 shell 命令后 Enter 执行，支持 shell 管道与重定向；不自动执行目录内脚本，不加载交互式 shell 配置。stdin=null，stdout/stderr 直接写独立日志，不占用终端或在内存缓存输出。Unix setsid，Windows DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP；启动失败显示原因，等待线程回收子进程并在日志追加退出状态。退出 filex 后子进程继续，若退出时任务仍在运行，其后不会追加监控退出状态，但进程输出仍写日志。日志不自动删除；日志目录见 README。后台任务自身的内存不计入 filex，长期服务需自行停止和管理。
 
 后台命令验证：两个产品分别 43 项 Rust 测试通过；71 项 Linux Python 回归全通过，含目录带引号／中文、正确 cwd、输出日志、退出 filex 后完成、取消与普通文件拒绝、自定义热键。实际 Visualize-sheet 的只读树输出确认 launch.sh 在第一项；未启动该项目服务。Windows release 和测试程序交叉编译通过，尚未 Windows 实机验证。
+
+### Git 写操作快捷菜单
+
+`git_actions.rs` 提供显式 Git 操作，独立于只读状态缓存。选中项解析 worktree 根（支持嵌套仓库与 .git 文件）；目录软链接以链接本身所在仓库为准。命令用参数数组直接执行，提交信息不经 shell，暂存 pathspec 使用 literal。清除 GIT_DIR/WORK_TREE/INDEX_FILE/COMMON_DIR/PREFIX 等仓库覆盖变量，按用户选中项操作。组合流程为仓库根 git add -A -- .、git commit -m message、git push；任一步非零即停止，包括无内容可提交。独立 commit 不隐式 add，独立 push 不隐式 commit。执行遵循用户 Git hooks、签名与远程配置。命令在当前终端前台运行，接管期间退出 raw/alternate screen，等待 Enter 后恢复树并刷新 Git 快照；传输目标选择模式中不允许触发。不会自动回滚成功的 add/commit，也不会自动重试失败的 push。
+
+Git 菜单验证：两项目各 45 项 Rust 测试、73 项 Linux Python 回归全通过。真实 PTY 在临时仓库与本地 bare remote 验证组合流程推送、确认取消不改 index/HEAD、仅暂存所选文件、提交信息含中文／引号／shell 字面量、pre-commit 失败跳过 push、返回后新建文件。测试未对用户工作仓库执行 add/commit/push，未访问外部远程服务。Windows release 和测试程序交叉编译通过，未做 Windows 实机与真实远程认证验证。

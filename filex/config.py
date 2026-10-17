@@ -13,7 +13,7 @@ DEFAULT_KEYS = {
     "preview": "p", "hidden": ".", "refresh": "Ctrl+r", "search": "Ctrl+f",
     "next_match": "n", "previous_match": "N", "goto": "g", "parent": "Left", "focus_root": "f",
     "new_file": "a", "new_folder": "A", "rename": "r", "copy": "c", "copy_path": "Ctrl+Alt+c",
-    "move": "m", "trash": "D", "run_background": "!", "help": "?", "config": ",",
+    "move": "m", "trash": "D", "run_background": "!", "git_menu": "G", "help": "?", "config": ",",
     "toggle_dual": "v", "switch_pane": "Tab",
 }
 DEFAULT_OPENERS = {

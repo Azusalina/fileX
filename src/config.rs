@@ -196,6 +196,7 @@ impl Default for Config {
             ("move", "m"),
             ("trash", "D"),
             ("run_background", "!"),
+            ("git_menu", "G"),
             ("help", "?"),
             ("config", ","),
             ("toggle_dual", "v"),

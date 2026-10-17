@@ -7,6 +7,7 @@ macro_rules! ui_format {
 mod config;
 mod edit;
 mod files;
+mod git_actions;
 mod git_status;
 mod input;
 mod jobs;
