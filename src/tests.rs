@@ -288,7 +288,7 @@ fn old_config_migrates_to_horizontal_and_new_shortcuts() {
     let conf = Config::load(&path).unwrap();
     assert_eq!(conf.action("left"), Some("parent"));
     assert_eq!(conf.action("u"), None);
-    assert_eq!(conf.action("v"), Some("toggle_dual"));
+    assert_eq!(conf.action("v"), Some("toggle_grouped"));
     assert_eq!(conf.action("r"), Some("rename"));
     assert_eq!(conf.action("R"), Some("rename"));
     assert_eq!(conf.action("\x12"), Some("refresh"));
@@ -299,7 +299,7 @@ fn old_config_migrates_to_horizontal_and_new_shortcuts() {
     let mut browser = Browser::new(&fixture.0, conf).unwrap();
     browser.expand_all().unwrap();
     let layout = Layout::new(&browser);
-    assert_eq!(layout.items[0].y, layout.items[1].y);
+    assert!(layout.items[0].y < layout.items[1].y);
     assert!(layout.items[1].x > layout.items[0].x);
 }
 

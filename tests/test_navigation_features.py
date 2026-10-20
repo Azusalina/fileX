@@ -159,7 +159,7 @@ terminal = false
         children = [layout.by_node[child] for child in self.browser.root.children]
         self.assertEqual(parent.y, children[0].y)
         self.assertGreater(children[0].x, parent.x)
-        self.assertEqual(key_map(conf)["v"], "toggle_dual")
+        self.assertEqual(key_map(conf)["v"], "toggle_grouped")
         self.assertFalse(hasattr(conf, "orientation"))
         self.assertEqual(key_map(conf)["r"], "rename")
         self.assertEqual(key_map(conf)["R"], "rename")

@@ -152,20 +152,18 @@ class TtyTests(unittest.TestCase):
             terminal.send('\r\x0eafter-script.txt\r');terminal.until(lambda:(root/'after-script.txt').exists())
             terminal.finish()
 
-    def test_dual_mirror_copy_move_target_and_exit_callback(self):
+    def test_grouped_copy_move_target_and_exit_callback(self):
         with tempfile.TemporaryDirectory() as d:
-            base=Path(d);left=base/'left';left.mkdir();right=base/'right';right.mkdir();dest=right/'dest';dest.mkdir()
-            (dest/'seed.txt').write_text('seed');(left/'copy.txt').write_text('copy');(left/'move.txt').write_text('move')
+            base=Path(d);left=base/'left';left.mkdir();dest=base/'dest';dest.mkdir()
+            (left/'copy.txt').write_text('copy');(left/'move.txt').write_text('move')
             conf=base/'settings.conf';conf.write_text('');callback=base/'cwd'
             terminal=self.start(left,conf,extra={'FILEX_CWD_FILE':str(callback)})
-            terminal.send('v\tg\x15'+str(right)+'\r');terminal.until(lambda:b'right *' in terminal.output)
-            # Right side arrows are mirrored. Enter dest then expand it and return to dest.
-            terminal.send('\x1b[D\x1b[D\x1b[D\x1b[C\t\x1b[Cc\r')
+            terminal.send('\x06copy.txt\rc');terminal.send('t\x15'+str(dest)+'\r')
             terminal.until(lambda:(dest/'copy.txt').exists())
-            terminal.send('\t\x1b[Bm\r');terminal.until(lambda:(dest/'move.txt').exists() and not (left/'move.txt').exists())
-            terminal.send('x');terminal.finish(None)
+            terminal.send('\x06\x15move.txt\rm');terminal.send('t\x15'+str(dest)+'\r')
+            terminal.until(lambda:(dest/'move.txt').exists() and not (left/'move.txt').exists())
+            terminal.send('g\x15'+str(dest)+'\rx');terminal.finish(None)
             self.assertEqual(callback.read_bytes(),os.fsencode(dest)+b'\0')
-            self.assertIn(b'< dest',terminal.output)
 
     def test_sigterm_hup_and_forced_tty_no_color(self):
         for stop in (signal.SIGTERM, signal.SIGHUP):

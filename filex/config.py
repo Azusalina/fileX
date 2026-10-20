@@ -14,7 +14,7 @@ DEFAULT_KEYS = {
     "next_match": "n", "previous_match": "N", "goto": "g", "parent": "Left", "focus_root": "f",
     "new_file": "a", "new_folder": "A", "rename": "r", "copy": "c", "copy_path": "Ctrl+Alt+c",
     "move": "m", "trash": "D", "run_background": "!", "git_menu": "G", "help": "?", "config": ",",
-    "toggle_dual": "v", "switch_pane": "Tab",
+    "toggle_grouped": "v", "reorder": "O", "hide_item": "z", "hidden_items": "Z",
 }
 DEFAULT_OPENERS = {
     "system": {"label": "系统默认", "command": ["xdg-open", "{path}"], "terminal": False},
@@ -74,7 +74,8 @@ class Config:
     max_loaded_nodes: int = 6000
     row_spacing: int = 1
     highlight_path: bool = True
-    dual_pane: bool = False
+    grouped: bool = True
+    excluded_paths: list = field(default_factory=list)
     open_in_right_pane: bool = True
     auto_english: bool = True
     konsole_shortcuts: bool = True
@@ -146,7 +147,7 @@ def load_config(path=None):
         if section != "git":
             rules = value.values() if section == "directory_order" else [value]
             for rule in rules:
-                if not isinstance(rule, dict) or rule.keys() - {"top", "bottom"} or any(not isinstance(names,list) or not all(isinstance(n,str) and n and '/' not in n and '\\' not in n for n in names) for names in rule.values()):
+                if not isinstance(rule, dict) or rule.keys() - {"top", "bottom", "sequence"} or any(not isinstance(names,list) or not all(isinstance(n,str) and n and '/' not in n and '\\' not in n for n in names) for names in rule.values()):
                     raise ValueError(f"{section}: 应为 top / bottom 名称列表")
         setattr(conf, section, value)
     allowed = {"browser", "layout", "preview", "colors", "keys", "search", "dashboard", "openers", "open_defaults", "extension_colors", "folder_colors", "tmux", "input_method", "links", "terminal"}
@@ -154,8 +155,8 @@ def load_config(path=None):
     if unknown:
         raise ValueError(f"未知配置区段: {', '.join(sorted(unknown))}")
     sections = {
-        "browser": {"show_hidden", "sort", "directories_first", "max_entries", "max_expand_nodes", "max_loaded_nodes"},
-        "layout": {"column_gap", "max_label_width", "row_spacing", "highlight_path", "dual_pane"},
+        "browser": {"excluded_paths", "show_hidden", "sort", "directories_first", "max_entries", "max_expand_nodes", "max_loaded_nodes"},
+        "layout": {"column_gap", "max_label_width", "row_spacing", "highlight_path", "grouped"},
         "tmux": {"open_in_right_pane"},
         "input_method": {"auto_english"},
         "links": {"scan_limit", "max_results"},
@@ -167,8 +168,11 @@ def load_config(path=None):
     # Drop retired options without changing the user's other settings.
     if isinstance(data.get("layout"), dict):
         data["layout"].pop("orientation", None)
+        data["layout"].pop("dual_pane", None)
     if isinstance(data.get("keys"), dict):
         data["keys"].pop("toggle_tree", None)
+        data["keys"].pop("toggle_dual", None)
+        data["keys"].pop("switch_pane", None)
     color_pattern = r"#[0-9a-fA-F]{6}"
     for section, names in sections.items():
         values = data.get(section, {})
@@ -186,6 +190,8 @@ def load_config(path=None):
     for key, choices in {"mode": {"auto", "tty"}, "color_mode": {"consistent", "auto", "16", "256", "truecolor", "none"}, "charset": {"auto", "ascii", "unicode"}}.items():
         if getattr(conf, key) not in choices:
             raise ValueError(f"{key}: invalid terminal option")
+    if not all(isinstance(p, str) and Path(p).expanduser().is_absolute() for p in conf.excluded_paths):
+        raise ValueError("excluded_paths must contain absolute paths")
     if conf.sort not in {"name", "size", "modified"}:
         raise ValueError("sort 应为 name、size 或 modified")
     for key, low, high in [("column_gap", 3, 20), ("max_label_width", 12, 120),
@@ -223,7 +229,7 @@ def load_config(path=None):
         if code == "\x0e" and action != "new_file" or code == "ctrl+shift+n" and action != "new_folder":
             raise ValueError("Ctrl+N / Ctrl+Shift+N 保留给新建文件 / 目录")
         conf.keys[action] = key
-    for action, alternatives in [("exit_here", ["z", "b", "t", "s", "Ctrl+Alt+x"]), ("link_info", ["i", "B", "T", "Ctrl+Alt+i"]), ("dashboard_narrow", ["{", "-", "Ctrl+Alt+b"]), ("dashboard_widen", ["}", "+", "Ctrl+Alt+w"]), ("toggle_dual", ["V", "Ctrl+Alt+v"])]:
+    for action, alternatives in [("exit_here", ["z", "b", "t", "s", "Ctrl+Alt+x"]), ("link_info", ["i", "B", "T", "Ctrl+Alt+i"]), ("dashboard_narrow", ["{", "-", "Ctrl+Alt+b"]), ("dashboard_widen", ["}", "+", "Ctrl+Alt+w"]), ("toggle_grouped", ["V", "Ctrl+Alt+v"]), ("reorder", ["Ctrl+Alt+o"]), ("hide_item", ["Ctrl+Alt+h"]), ("hidden_items", ["Ctrl+Alt+z"])]:
         if action not in keys:
             occupied = {key_code(value) for name, value in conf.keys.items() if name != action}
             if key_code(conf.keys[action]) in occupied:

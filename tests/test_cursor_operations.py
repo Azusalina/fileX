@@ -75,6 +75,34 @@ class CursorOperationsTests(unittest.TestCase):
             finally:
                 terminal.close()
 
+    def test_plus_entry_copies_batch_and_moves_into_folder(self):
+        with tempfile.TemporaryDirectory(prefix='filex-plus-place-') as d:
+            root = Path(d)
+            a = root/'a.txt'; a.write_text('alpha')
+            b = root/'b.txt'; b.write_text('beta')
+            target = root/'target'; target.mkdir()
+            moved = root/'moved'; moved.mkdir()
+            config = root/'.settings.conf'
+            config.write_text('[input_method]\nauto_english=false\n[terminal]\nmode="tty"\ncharset="ascii"\n')
+            terminal = Terminal([str(ROOT/'filex.sh'), str(root), '--config', str(config)], root)
+            try:
+                terminal.until(lambda: b'Space:mark' in terminal.output)
+                terminal.send('\x06a.txt\r ')
+                terminal.send('\x06\x15b.txt\r c')
+                terminal.send('g\x15'+str(target)+'\r\x1b[C\r')
+                terminal.until(lambda: (target/'a.txt').exists() and (target/'b.txt').exists())
+                self.assertEqual((target/'a.txt').read_text(), 'alpha')
+                self.assertTrue(a.exists() and b.exists())
+                terminal.send('g\x15'+str(root)+'\r')
+                terminal.send('\x06\x15a.txt\rm')
+                terminal.send('g\x15'+str(moved)+'\r+')
+                terminal.until(lambda: (moved/'a.txt').exists() and not a.exists())
+                self.assertEqual((moved/'a.txt').read_text(), 'alpha')
+                terminal.send('Q')
+                self.assertEqual(terminal.process.wait(timeout=5), 0)
+            finally:
+                terminal.close()
+
     def test_multiple_sources_plus_creation_and_mid_name_edit(self):
         with tempfile.TemporaryDirectory(prefix='filex-cursor-') as d:
             root = Path(d)
@@ -92,7 +120,7 @@ class CursorOperationsTests(unittest.TestCase):
                 terminal.send('\x06\x15b.txt\r c')
                 terminal.until(lambda: b'COPY 2 items' in terminal.output)
                 terminal.send('g\x15'+str(destination)+'\r')
-                terminal.send('\x1b[C\rcreated 子目录\r\r')
+                terminal.send('Acreated 子目录\r\r')
                 created = destination/'created 子目录'
                 terminal.until(lambda: (created/'a中.txt').exists() and (created/'b.txt').exists())
                 self.assertEqual((created/'a中.txt').read_text(), 'alpha')

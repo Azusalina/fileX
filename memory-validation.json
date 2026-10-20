@@ -1,20 +1,20 @@
 {
   "version": "1.5.0",
-  "binary_sha256": "07fd9fd42d2c577d5e8fc0c9bce204f523126430bd293bac36194df163a214ba",
-  "date": "2026-10-15",
+  "binary_sha256": "1fc077f299d129080a9053b9659907dbf3cc02e73019ec075ec34c83507118b9",
+  "date": "2026-10-18",
   "metric": "Linux /proc/<pid>/status VmHWM; release application process only, excludes terminal, measurement driver, compiler and launched external applications",
   "settings": {
     "color_mode": "consistent",
     "max_entries": 1000,
-    "max_loaded_nodes_per_pane": 6000,
+    "max_loaded_nodes": 6000,
     "max_expand_nodes": 5000
   },
   "scenarios": {
     "tty_branches_7200_files": {
-      "max_observed_rss_kib": 6768,
-      "peak_rss_kib": 6768,
-      "peak_rss_mb": 6.93,
-      "peak_rss_mib": 6.609,
+      "max_observed_rss_kib": 6760,
+      "peak_rss_kib": 6760,
+      "peak_rss_mb": 6.922,
+      "peak_rss_mib": 6.602,
       "under_15_mb": true,
       "actions": [
         "E",
@@ -26,53 +26,48 @@
         "\u0012"
       ]
     },
-    "tty_dual_branches_7200_files": {
-      "max_observed_rss_kib": 7924,
-      "peak_rss_kib": 7924,
-      "peak_rss_mb": 8.114,
-      "peak_rss_mib": 7.738,
+    "tty_classic_branches_7200_files": {
+      "max_observed_rss_kib": 6988,
+      "peak_rss_kib": 6988,
+      "peak_rss_mb": 7.156,
+      "peak_rss_mib": 6.824,
       "under_15_mb": true,
       "actions": [
         "v",
         "E",
-        "\t",
         "E",
         "q",
         "\u0006needle_B059_I119\r",
-        "\t",
         "y",
         "v",
         "\u0012"
       ]
     },
-    "dual_branches_7200_files": {
-      "max_observed_rss_kib": 8044,
-      "peak_rss_kib": 8044,
-      "peak_rss_mb": 8.237,
-      "peak_rss_mib": 7.855,
+    "classic_branches_7200_files": {
+      "max_observed_rss_kib": 7100,
+      "peak_rss_kib": 7100,
+      "peak_rss_mb": 7.27,
+      "peak_rss_mib": 6.934,
       "under_15_mb": true,
       "actions": [
         "v",
         "E",
-        "\t",
         "E",
         "q",
         "\u0006needle_B059_I119\r",
         "k",
         "j",
-        "\t",
         "\u0006needle_B059_I119\r",
         "q",
-        "\t",
         "v",
         "\u0012"
       ]
     },
     "symlinks_7200": {
-      "max_observed_rss_kib": 6912,
-      "peak_rss_kib": 6912,
-      "peak_rss_mb": 7.078,
-      "peak_rss_mib": 6.75,
+      "max_observed_rss_kib": 7060,
+      "peak_rss_kib": 7060,
+      "peak_rss_mb": 7.229,
+      "peak_rss_mib": 6.895,
       "under_15_mb": true,
       "actions": [
         "E",
@@ -86,10 +81,10 @@
       ]
     },
     "hard_links_2400": {
-      "max_observed_rss_kib": 3924,
-      "peak_rss_kib": 3924,
-      "peak_rss_mb": 4.018,
-      "peak_rss_mib": 3.832,
+      "max_observed_rss_kib": 3980,
+      "peak_rss_kib": 3980,
+      "peak_rss_mb": 4.076,
+      "peak_rss_mib": 3.887,
       "under_15_mb": true,
       "actions": [
         "\u001b[C",
@@ -101,10 +96,10 @@
       ]
     },
     "project_root": {
-      "max_observed_rss_kib": 4904,
-      "peak_rss_kib": 4904,
-      "peak_rss_mb": 5.022,
-      "peak_rss_mib": 4.789,
+      "max_observed_rss_kib": 5884,
+      "peak_rss_kib": 5884,
+      "peak_rss_mb": 6.025,
+      "peak_rss_mib": 5.746,
       "under_15_mb": true,
       "actions": [
         "q",
@@ -116,10 +111,10 @@
       ]
     },
     "flat_20000_files": {
-      "max_observed_rss_kib": 4024,
-      "peak_rss_kib": 4024,
-      "peak_rss_mb": 4.121,
-      "peak_rss_mib": 3.93,
+      "max_observed_rss_kib": 4208,
+      "peak_rss_kib": 4208,
+      "peak_rss_mb": 4.309,
+      "peak_rss_mib": 4.109,
       "under_15_mb": true,
       "actions": [
         "q",
@@ -133,10 +128,10 @@
       ]
     },
     "branches_7200_files": {
-      "max_observed_rss_kib": 6776,
-      "peak_rss_kib": 6776,
-      "peak_rss_mb": 6.939,
-      "peak_rss_mib": 6.617,
+      "max_observed_rss_kib": 6796,
+      "peak_rss_kib": 6796,
+      "peak_rss_mb": 6.959,
+      "peak_rss_mib": 6.637,
       "under_15_mb": true,
       "actions": [
         "E",

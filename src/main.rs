@@ -13,6 +13,7 @@ mod input;
 mod jobs;
 mod links;
 mod model;
+mod ordering;
 mod terminal_host;
 mod terminal_profile;
 mod tmux;
@@ -47,7 +48,7 @@ fn run() -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "filex\nfilex [DIRECTORY] [--config PATH] [--tty] [--ascii] [--print-tree] [--init-config]\nCurrent directory by default. Linux TTY / SSH: terminal openers, a/A create, y copy path, Ctrl+V paste path.\nq dashboard / Q quit / Ctrl+F search / Enter folder expand / file open with / w menu / r rename / v dual panes.\nPipes and TERM=dumb automatically print a tree. --tty forces console compatibility."
+                    "filex\nfilex [DIRECTORY] [--config PATH] [--tty] [--ascii] [--print-tree] [--init-config]\nCurrent directory by default. Linux TTY / SSH: terminal openers, a/A create, y copy path, Ctrl+V paste path.\nq dashboard / Q quit / Ctrl+F search / Enter folder expand / file open with / w menu / r rename / v grouped tree / O order / z hide / Z restore.\nPipes and TERM=dumb automatically print a tree. --tty forces console compatibility."
                 );
                 return Ok(());
             }

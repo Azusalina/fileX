@@ -289,6 +289,9 @@ impl Browser {
             if !self.conf.hidden && name.starts_with('.') && force != Some(path.as_path()) {
                 continue;
             }
+            if self.conf.excluded_paths.iter().any(|p| p == &path) {
+                continue;
+            }
             count += 1;
             let info = fs::symlink_metadata(&path).ok();
             let dir = info.as_ref().is_some_and(|m| m.is_dir());
@@ -625,6 +628,9 @@ impl Browser {
                 continue;
             }
             let path = item.path();
+            if self.conf.excluded_paths.iter().any(|p| path.starts_with(p)) {
+                continue;
+            }
             if name.to_lowercase().contains(&needle) {
                 results.push(path.clone());
                 if results.len() >= self.conf.search_results {
@@ -776,7 +782,23 @@ impl Layout {
             else {
                 break;
             };
-            let first = parent.borrow().children.first().cloned();
+            let first = if !parent.borrow().children.iter().any(|n| {
+                self.items
+                    .iter()
+                    .any(|q| Rc::ptr_eq(&q.node, n) && q.y == p.y)
+            }) {
+                parent
+                    .borrow()
+                    .children
+                    .iter()
+                    .find(|n| {
+                        (n.borrow().dir || n.borrow().create_entry)
+                            == (node.borrow().dir || node.borrow().create_entry)
+                    })
+                    .cloned()
+            } else {
+                parent.borrow().children.first().cloned()
+            };
             let Some(first) = first.and_then(|first| {
                 self.items
                     .iter()
@@ -784,7 +806,11 @@ impl Layout {
             }) else {
                 break;
             };
-            let branch = first.x - gap + 2;
+            let branch = if first.y > p.y {
+                first.x - 2
+            } else {
+                first.x - gap + 2
+            };
             segments.extend([
                 (p.x + p.label.width(), p.y, branch, p.y),
                 (branch, p.y, branch, child.y),
@@ -801,6 +827,9 @@ impl Layout {
         route.cells(left, top, width, height).into_keys().collect()
     }
     pub fn new(browser: &Browser) -> Self {
+        if browser.conf.grouped {
+            return Self::grouped(browser);
+        }
         let nodes = browser.visible();
         let boxed = nodes.iter().any(|n| n.borrow().marked);
         let row_spacing = browser.conf.row_spacing.max(if boxed { 3 } else { 1 });
@@ -893,6 +922,100 @@ impl Layout {
             lines,
             width,
             height,
+        }
+    }
+    fn grouped(browser: &Browser) -> Self {
+        let nodes = browser.visible();
+        let boxed = nodes.iter().any(|n| n.borrow().marked);
+        let spacing = browser.conf.row_spacing.max(if boxed { 3 } else { 1 });
+        let gap = browser.conf.gap.max(4);
+        let mut labels = HashMap::new();
+        let mut sizes: HashMap<usize, (usize, usize)> = HashMap::new();
+        for node in nodes.iter().rev() {
+            let n = node.borrow();
+            let id = Rc::as_ptr(node) as usize;
+            let text = n.label(browser.conf.label_width);
+            let own = text.0.width();
+            let (mut dw, mut dh, mut fw, mut fh) = (0, 0, 0, 0);
+            if n.expanded {
+                for child in &n.children {
+                    let (w, h) = sizes[&(Rc::as_ptr(child) as usize)];
+                    if child.borrow().dir || child.borrow().create_entry {
+                        dw = dw.max(w);
+                        dh += h;
+                    } else {
+                        fw = fw.max(w);
+                        fh += h;
+                    }
+                }
+            }
+            let width = if dh + fh == 0 {
+                own
+            } else {
+                own + gap + dw + if dh > 0 && fh > 0 { gap } else { 0 } + fw
+            };
+            let height = spacing + dh.max(fh);
+            sizes.insert(id, (width, height));
+            labels.insert(id, text);
+        }
+        let root_id = Rc::as_ptr(&browser.root) as usize;
+        let mut positions = HashMap::new();
+        positions.insert(root_id, (0, usize::from(boxed)));
+        let mut items = Vec::new();
+        let mut lines = Vec::new();
+        for node in nodes {
+            let id = Rc::as_ptr(&node) as usize;
+            let (x, y) = positions[&id];
+            let (text, link_start) = labels.remove(&id).unwrap();
+            let n = node.borrow();
+            if n.expanded && !n.children.is_empty() {
+                let dw = n
+                    .children
+                    .iter()
+                    .filter(|c| c.borrow().dir || c.borrow().create_entry)
+                    .map(|c| sizes[&(Rc::as_ptr(c) as usize)].0)
+                    .max()
+                    .unwrap_or(0);
+                for directories in [true, false] {
+                    let children = n
+                        .children
+                        .iter()
+                        .filter(|c| (c.borrow().dir || c.borrow().create_entry) == directories)
+                        .collect::<Vec<_>>();
+                    if children.is_empty() {
+                        continue;
+                    }
+                    let cx =
+                        x + text.width() + gap + if !directories && dw > 0 { dw + gap } else { 0 };
+                    let branch = cx - 2;
+                    let mut cy = y + spacing;
+                    let mut last = cy;
+                    lines.push((x + text.width(), y, branch, y));
+                    for child in children {
+                        let cid = Rc::as_ptr(child) as usize;
+                        positions.insert(cid, (cx, cy));
+                        lines.push((branch, cy, cx - 1, cy));
+                        last = cy;
+                        cy += sizes[&cid].1;
+                    }
+                    lines.push((branch, y, branch, last));
+                }
+            }
+            drop(n);
+            items.push(Placement {
+                node,
+                x,
+                y,
+                label: text,
+                link_start,
+            });
+        }
+        items.sort_by_key(|p| (p.y, p.x));
+        Self {
+            items,
+            lines,
+            width: sizes[&root_id].0,
+            height: sizes[&root_id].1 + usize::from(boxed),
         }
     }
     pub fn cells(

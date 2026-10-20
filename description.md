@@ -741,3 +741,26 @@ scripts/distro-tty-smoke.py 在隔离 root 真实 PTY 中验证 Python3 运行�
 `git_actions.rs` 提供显式 Git 操作，独立于只读状态缓存。选中项解析 worktree 根（支持嵌套仓库与 .git 文件）；目录软链接以链接本身所在仓库为准。命令用参数数组直接执行，提交信息不经 shell，暂存 pathspec 使用 literal。清除 GIT_DIR/WORK_TREE/INDEX_FILE/COMMON_DIR/PREFIX 等仓库覆盖变量，按用户选中项操作。组合流程为仓库根 git add -A -- .、git commit -m message、git push；任一步非零即停止，包括无内容可提交。独立 commit 不隐式 add，独立 push 不隐式 commit。执行遵循用户 Git hooks、签名与远程配置。命令在当前终端前台运行，接管期间退出 raw/alternate screen，等待 Enter 后恢复树并刷新 Git 快照；传输目标选择模式中不允许触发。不会自动回滚成功的 add/commit，也不会自动重试失败的 push。
 
 Git 菜单验证：两项目各 45 项 Rust 测试、73 项 Linux Python 回归全通过。真实 PTY 在临时仓库与本地 bare remote 验证组合流程推送、确认取消不改 index/HEAD、仅暂存所选文件、提交信息含中文／引号／shell 字面量、pre-commit 失败跳过 push、返回后新建文件。测试未对用户工作仓库执行 add/commit/push，未访问外部远程服务。Windows release 和测试程序交叉编译通过，未做 Windows 实机与真实远程认证验证。
+
+### 目录内 + 作为传输放入位置（2026-10-17）
+
+复制／移动状态中，虚拟 + 节点的 path 是其所在目录，Enter 直接提交传输到该目录，不再弹出新建文件夹输入框。+ 键通过 Browser.target() 获取目录并提交；A（或用户自定义 new_folder 键）创建子目录、选中新目录后 Enter 放入。支持单项与多选，成功后清理两侧虚拟节点，复制保留源、移动移除源，目录布局和传输冲突确认沿用既有逻辑。此行为替代旧版“+ 创建目标文件夹”的说明；t 手动路径输入不变。
+
+此改动验证：两产品各 46 项 Rust 测试、74 项 Linux Python 回归通过。新增真实 PTY 验证多选后选中 + Enter 直接复制、+ 键移动、源保留／移除；既有测试改用 A 新建子目录并继续放入，重命名与覆盖确认回归通过。Linux release 已重建，Windows release 与测试程序交叉编译通过；Windows 实机验证未执行。
+
+
+### 2026-10-18：可编辑顺序、分组树、记忆排除项
+
+移除双栏及其镜像坐标、左右反转和 Tab 切换；v 改为 grouped/classic，旧 dual_pane / toggle_dual / switch_pane 配置读取时忽略。单树保留源选择、跨目录多选、传输待操作状态及 t 地址输入。
+
+ordering.rs 实现 Unicode 名称上的 % 通配（无正则依赖），sequence 首次匹配、legacy top/bottom 的精确名称例外、= 前缀字面量及 <other-folders>。匹配结果进入已有扫描堆和最终排序键，所以显示上限选取与最终显示一致。完整顺序编辑仅列出当前父目录已加载的实际节点；虚拟 + 不进入持久列表，写为 =字面名称 与末尾 %。grouped 物理分列优先，序列分别作用于目录列／文件列，classic 可以看到混合顺序。
+
+分组 Layout 使用迭代后序计算子树矩形，目录子树纵向堆叠，直属文件列在完整目录子树右侧；两组在父目录同一水平线上连接。高度取两组最大值，标记方框沿用最小三行间距；边线和祖先路径高亮使用相同分组连接。不额外扫描磁盘，节点上限仍生效。展开深树会增加宽度，可自动跟随或 H/L 平移。
+
+z/Z 将精确路径持久化到 browser.excluded_paths。扫描和搜索都跳过排除目录，独立于系统点文件显示；不修改源文件。隐藏项若被外部重命名或移动，旧路径规则仍保留，Z 可移除。显式从命令行／g 把某个目录设为根，仍可进入该目录；规则限制的是其父目录中的显示。
+
+配置写回采用 [toml_edit](https://docs.rs/toml_edit/0.23.10/toml_edit/) 保留注释和其他键，解析并跟随主配置软链接，在同目录创建临时文件、校验原文件未在保存中改变后原子替换。拒绝写入非法 TOML；出错时不应用内存排序／隐藏，提示错误。不是跨进程的配置编辑锁；其他程序同时写同一字段时应先重载。依赖新增 toml_edit，仅执行偏好保存时解析编辑文档。
+
+本次验证：两项目各 49 项共享 Rust 测试通过；74 项 Linux Python / PTY 回归通过，移除过时镜像测试并以分组布局、排序保存、隐藏／恢复、单树传输替代。最终构建另复测偏好 PTY 和配置兼容测试。覆盖 % 前后缀／多段／Unicode／字面量、完整序列、原子写回注释和软链接、每层分组的标签与线段互不穿越、排除项不参与点文件切换及搜索、重启记忆、窄终端和 tmux。Windows release／测试程序交叉编译，不代表 Windows 实机验证。
+
+最终 Linux release 的 8 项真实 PTY 内存场景全部低于 15 MB，最高 VmHWM 为 7.27 MB；原始记录和二进制 SHA256 见 fileX/memory-validation.json。仅计应用进程，Windows、外部程序及终端不在此测量内。

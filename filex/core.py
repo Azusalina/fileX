@@ -119,6 +119,8 @@ class Browser:
                 for entry in iterator:
                     if not self.config.show_hidden and entry.name.startswith(".") and node.path / entry.name not in self._ancestry_pins:
                         continue
+                    if str(node.path / entry.name) in self.config.excluded_paths:
+                        continue
                     try:
                         link = entry.is_symlink()
                         directory = entry.is_dir(follow_symlinks=False)
@@ -131,17 +133,20 @@ class Browser:
                 value = name.casefold() if self.config.sort == "name" else -size if self.config.sort == "size" else -modified
                 rule = {**self.config.order, **self.config.directory_order.get(node.path.name, {}), **self.config.directory_order.get(str(node.path), {})}
                 top, bottom = rule.get("top", []), rule.get("bottom", [])
-                selector = "<other-folders>"
-                if name != selector and name in top:
-                    priority = (-1, top.index(name))
-                elif name != selector and name in bottom:
-                    priority = (1, bottom.index(name))
-                elif directory and selector in top:
-                    priority = (-1, top.index(selector))
-                elif directory and selector in bottom:
-                    priority = (1, bottom.index(selector))
-                else:
-                    priority = (0, 0)
+                import re
+                def matches(pattern):
+                    if pattern == "<other-folders>": return directory
+                    if pattern.startswith("="): return name == pattern[1:]
+                    return re.fullmatch(re.escape(pattern).replace('%', '.*'), name, flags=re.DOTALL) is not None
+                def exact(pattern):
+                    return pattern != "<other-folders>" and ('%' not in pattern or pattern.startswith('=')) and name == pattern.removeprefix('=')
+                sequence = rule.get("sequence", [])
+                ranked = next(((-2, i) for i, p in enumerate(sequence) if matches(p)), None)
+                if ranked is None:
+                    ranked = next(((group, i) for group, patterns in [(-1, top), (1, bottom)] for i, p in enumerate(patterns) if exact(p)), None)
+                if ranked is None:
+                    ranked = next(((group, i) for group, patterns in [(-1, top), (1, bottom)] for i, p in enumerate(patterns) if matches(p)), None)
+                priority = ranked or (0, 0)
                 return (*priority, not directory if self.config.directories_first else False, value, name)
             entries.sort(key=key)
             old = {child.path: child for child in node.children}

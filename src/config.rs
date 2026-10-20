@@ -18,6 +18,7 @@ pub struct Opener {
 pub struct OrderRule {
     pub top: Vec<String>,
     pub bottom: Vec<String>,
+    pub sequence: Vec<String>,
 }
 fn order_names(value: &Value) -> Result<Vec<String>, String> {
     value
@@ -48,7 +49,8 @@ pub struct Config {
     pub label_width: usize,
     pub row_spacing: usize,
     pub highlight_path: bool,
-    pub dual_pane: bool,
+    pub grouped: bool,
+    pub excluded_paths: Vec<PathBuf>,
     pub tmux_right: bool,
     pub auto_english: bool,
     pub konsole_shortcuts: bool,
@@ -199,8 +201,10 @@ impl Default for Config {
             ("git_menu", "G"),
             ("help", "?"),
             ("config", ","),
-            ("toggle_dual", "v"),
-            ("switch_pane", "Tab"),
+            ("toggle_grouped", "v"),
+            ("reorder", "O"),
+            ("hide_item", "z"),
+            ("hidden_items", "Z"),
         ]
         .into_iter()
         .map(|(a, b)| (a.into(), b.into()))
@@ -278,7 +282,8 @@ impl Default for Config {
             label_width: 32,
             row_spacing: 1,
             highlight_path: true,
-            dual_pane: false,
+            grouped: true,
+            excluded_paths: vec![],
             tmux_right: true,
             auto_english: true,
             konsole_shortcuts: true,
@@ -359,37 +364,29 @@ impl Config {
             .or_else(|| self.directory_order.get(base.as_ref()));
         let top = rule.map_or(&self.order.top, |r| &r.top);
         let bottom = rule.map_or(&self.order.bottom, |r| &r.bottom);
-        let equal = |other: &String| {
-            if cfg!(windows) {
-                other.to_lowercase() == name.to_lowercase()
-            } else {
-                other == name
-            }
-        };
-        if let Some(rank) = top
+        let sequence = rule.map_or(&self.order.sequence, |r| &r.sequence);
+        if let Some(index) = sequence
             .iter()
-            .position(|item| item != "<other-folders>" && equal(item))
+            .position(|p| crate::ordering::matches(p, name, is_dir))
         {
-            (-1, rank)
-        } else if let Some(rank) = bottom
-            .iter()
-            .position(|item| item != "<other-folders>" && equal(item))
-        {
-            (1, rank)
-        } else if let Some(rank) = top
-            .iter()
-            .position(|item| is_dir && item == "<other-folders>")
-        {
-            (-1, rank)
-        } else if let Some(rank) = bottom
-            .iter()
-            .position(|item| is_dir && item == "<other-folders>")
-        {
-            (1, rank)
-        } else {
-            (0, 0)
+            return (-2, index);
         }
+        for (group, list) in [(-1, top), (1, bottom)] {
+            if let Some(index) = list.iter().position(|p| crate::ordering::exact(p, name)) {
+                return (group, index);
+            }
+        }
+        for (group, list) in [(-1, top), (1, bottom)] {
+            if let Some(index) = list
+                .iter()
+                .position(|p| crate::ordering::matches(p, name, is_dir))
+            {
+                return (group, index);
+            }
+        }
+        (0, 0)
     }
+
     pub fn dashboard_columns(&self, terminal_width: usize) -> usize {
         if terminal_width < 70 {
             0
@@ -424,6 +421,9 @@ impl Config {
         let table = data.as_table().ok_or("配置应为 TOML 表")?;
         let mut conf = Self::default();
         if let Some(order) = table.get("order").and_then(Value::as_table) {
+            if let Some(sequence) = order.get("sequence") {
+                conf.order.sequence = order_names(sequence)?;
+            }
             if let Some(top) = order.get("top") {
                 conf.order.top = order_names(top)?;
             }
@@ -464,6 +464,7 @@ impl Config {
                 .ok_or_else(|| format!("{section}: 应为表"))?;
             for (key, value) in values {
                 match (section.as_str(), key.as_str()) {
+                    ("order", "sequence") => conf.order.sequence = order_names(value)?,
                     ("order", "top") => conf.order.top = order_names(value)?,
                     ("order", "bottom") => conf.order.bottom = order_names(value)?,
                     ("directory_order", _) => {
@@ -473,6 +474,7 @@ impl Config {
                             .ok_or("directory_order entry must be a table")?
                         {
                             match field.as_str() {
+                                "sequence" => rule.sequence = order_names(names)?,
                                 "top" => rule.top = order_names(names)?,
                                 "bottom" => rule.bottom = order_names(names)?,
                                 _ => return Err(format!("Unknown ordering field: {field}")),
@@ -501,6 +503,20 @@ impl Config {
                     ("git", "max_entries") => {
                         conf.git_max_entries = number(value, key, 100, 20000)?
                     }
+                    ("browser", "excluded_paths") => {
+                        conf.excluded_paths = value
+                            .as_array()
+                            .ok_or("excluded_paths must be an array")?
+                            .iter()
+                            .map(|v| {
+                                let p = expand_home(&string(v, "excluded path")?);
+                                if !p.is_absolute() {
+                                    return Err("Excluded paths must be absolute".into());
+                                }
+                                Ok(p)
+                            })
+                            .collect::<Result<_, String>>()?;
+                    }
                     ("browser", "show_hidden") => {
                         conf.hidden = value.as_bool().ok_or("show_hidden 应为布尔值")?
                     }
@@ -528,8 +544,10 @@ impl Config {
                     ("layout", "highlight_path") => {
                         conf.highlight_path = value.as_bool().ok_or("highlight_path 应为布尔值")?
                     }
-                    ("layout", "dual_pane") => {
-                        conf.dual_pane = value.as_bool().ok_or("dual_pane 应为布尔值")?
+                    ("layout", "grouped") => {
+                        conf.grouped = value.as_bool().ok_or("grouped must be boolean")?
+                    }
+                    ("layout", "dual_pane") | ("keys", "toggle_dual") | ("keys", "switch_pane") => {
                     }
                     // Ignore retired options so existing user configurations still load.
                     ("layout", "orientation") | ("keys", "toggle_tree") => {}
@@ -736,7 +754,10 @@ impl Config {
             ("link_info", &["i", "B", "T", "Ctrl+Alt+i"][..]),
             ("dashboard_narrow", &["{", "-", "Ctrl+Alt+b"][..]),
             ("dashboard_widen", &["}", "+", "Ctrl+Alt+w"][..]),
-            ("toggle_dual", &["V", "Ctrl+Alt+v"][..]),
+            ("toggle_grouped", &["V", "Ctrl+Alt+v"][..]),
+            ("reorder", &["Ctrl+Alt+o"][..]),
+            ("hide_item", &["Ctrl+Alt+h"][..]),
+            ("hidden_items", &["Ctrl+Alt+z"][..]),
         ] {
             if table
                 .get("keys")
