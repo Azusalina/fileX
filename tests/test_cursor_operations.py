@@ -60,6 +60,7 @@ class CursorOperationsTests(unittest.TestCase):
                 terminal.send('\x1b')
                 self.assertEqual((dest/a.name).read_text(), 'old-a')
                 self.assertEqual((dest/b.name).read_text(), 'old-b')
+                terminal.send('\x1b')  # exit find mode, preserve transfer and marks
                 terminal.send('\x1b')  # cancel transfer
                 terminal.send('\x1b')  # clear marks
                 terminal.send('g\x15'+str(root)+'\r')

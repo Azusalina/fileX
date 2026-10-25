@@ -1,7 +1,7 @@
 {
-  "date": "2026-10-18",
-  "rust_shared_tests_per_product": 49,
-  "linux_python_tests": 74,
+  "date": "2026-10-24",
+  "rust_shared_tests_per_product": 51,
+  "linux_python_tests": 76,
   "linux_pty": "single grouped/classic tree, remembered exclusions and manual order, cursor destination, virtual + placement, A folder creation, Unicode rename cursor, TTY/tmux regression passed",
   "zip": "Bash unzip Unicode/spaces/quotes, unique output folders, traversal and symlink rejection passed",
   "windows": "release and test executable cross-compiled; native Windows 11 runtime not verified",
@@ -13,5 +13,6 @@
   "git_actions": "PTY temporary worktree and local bare remote: cancelled publish leaves index/HEAD unchanged, selected-only add, literal Unicode/quotes/shell syntax commit message, real local push, failed pre-commit skips push, return to TUI verified",
   "plus_destination": "Virtual + Enter copies batch into containing directory; + key moves to target directory; no creation prompt; A creates child folder then Enter places items. Rust and real PTY checks passed.",
   "grouped_tree": "Mirrored dual panes removed; each parent connects separate folder subtree and direct-file columns. Geometry tests cover nested groups, disjoint labels, highlighted route and classic toggle.",
-  "excluded_paths": "z persists exact view-only exclusion; Z restores; independent of dotfiles, filtered in tree/search, subtree hidden, files remain on disk; restart and symlink config checks passed"
+  "excluded_paths": "z persists exact view-only exclusion; Z restores; independent of dotfiles, filtered in tree/search, subtree hidden, files remain on disk; restart and symlink config checks passed",
+  "find_mode": "Up/Down wrap among recursive matches; Escape exits before cancelling pending transfer or clearing marks. Rust covers cross-parent matches, retained branches, marks and pending transfer, single/zero results. PTY covers 3-match wrap, current selection on Escape, zero matches and cancelling search input; legacy transfer test updated and rerun."
 }

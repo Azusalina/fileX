@@ -199,6 +199,7 @@ impl Default for Config {
             ("trash", "D"),
             ("run_background", "!"),
             ("git_menu", "G"),
+            ("toolkit", "T"),
             ("help", "?"),
             ("config", ","),
             ("toggle_grouped", "v"),

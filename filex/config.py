@@ -14,7 +14,7 @@ DEFAULT_KEYS = {
     "next_match": "n", "previous_match": "N", "goto": "g", "parent": "Left", "focus_root": "f",
     "new_file": "a", "new_folder": "A", "rename": "r", "copy": "c", "copy_path": "Ctrl+Alt+c",
     "move": "m", "trash": "D", "run_background": "!", "git_menu": "G", "help": "?", "config": ",",
-    "toggle_grouped": "v", "reorder": "O", "hide_item": "z", "hidden_items": "Z",
+    "toggle_grouped": "v", "reorder": "O", "hide_item": "z", "hidden_items": "Z", "toolkit": "T",
 }
 DEFAULT_OPENERS = {
     "system": {"label": "系统默认", "command": ["xdg-open", "{path}"], "terminal": False},

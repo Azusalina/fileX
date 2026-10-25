@@ -347,6 +347,12 @@ class Terminal:
                     self.message = self.browser.collapse_all()
                 elif action == "open":
                     self.open_method(default_opener(self.browser.selected, self.browser.config))
+                elif action == "toolkit":
+                    path = self.browser.selected.path
+                    if not path.is_file(): raise ValueError("Toolkit：请先选中本地文件")
+                    launcher = os.environ.get("FILEX_TOOLKIT_DESKTOP", str(Path(__file__).resolve().parents[2] / "integrate-toolkit-arch/toolkit-desktop"))
+                    subprocess.Popen([launcher, "--list", "--", str(path.absolute())], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                    self.message = "Toolkit：选择工具，再选择结果路径与文件名"
                 elif key in ("\n", "\r", curses.KEY_ENTER) and self.browser.selected.is_dir:
                     if not self.browser.selected.expanded:
                         self.browser.expand(self.browser.selected)
