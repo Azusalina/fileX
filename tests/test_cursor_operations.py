@@ -82,6 +82,8 @@ class CursorOperationsTests(unittest.TestCase):
             a = root/'a.txt'; a.write_text('alpha')
             b = root/'b.txt'; b.write_text('beta')
             target = root/'target'; target.mkdir()
+            (target/'existing-folder').mkdir()
+            (target/'existing.txt').write_text('keep')
             moved = root/'moved'; moved.mkdir()
             config = root/'.settings.conf'
             config.write_text('[input_method]\nauto_english=false\n[terminal]\nmode="tty"\ncharset="ascii"\n')

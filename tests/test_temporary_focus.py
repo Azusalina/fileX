@@ -82,14 +82,14 @@ class TemporaryFocusTests(unittest.TestCase):
             base=Path(d);root=base/'files';root.mkdir()
             for name in ['branchA/deepA', 'branchA/hiddenAtA', 'branchB/deepB', 'branchB/hiddenAtB']:
                 (root/name).mkdir(parents=True)
-            for name in ['branchA/deepA/leaf.txt', 'branchA/deepA/hiddenLeaf.txt']:
+            for name in ['branchA/deepA/primary.txt', 'branchA/deepA/hiddenLeaf.txt']:
                 (root/name).touch()
             config=base/'settings.conf';original='[input_method]\nauto_english=false\n[terminal]\nmode="tty"\ncharset="ascii"\n';config.write_text(original)
             t=self.start(root,config)
             def select(name):
                 t.send('\x06\x15'+name+'\r');t.send('\x1b')
             select('deepA');t.send('F')
-            select('leaf.txt');t.send('F')
+            select('primary.txt');t.send('F')
             select('deepB');t.send('F')
             t.output.clear();t.send('\x12')
             t.until(lambda:b'FOCUS [' in t.output)

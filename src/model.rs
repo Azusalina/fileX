@@ -250,10 +250,12 @@ impl Browser {
         let path = self.selected.borrow().path.clone();
         self.search_key = None;
         if self.temporary_focus.contains(&path) {
-            self.temporary_focus.retain(|focus| !focus.starts_with(&path));
+            self.temporary_focus
+                .retain(|focus| !focus.starts_with(&path));
             return Ok("Temporary focus restored here and below".into());
         }
-        self.temporary_focus.retain(|focus| focus.parent() != path.parent());
+        self.temporary_focus
+            .retain(|focus| focus.parent() != path.parent());
         self.temporary_focus.push(path);
         Ok("Temporary focus: siblings hidden here; F restores this level and below".into())
     }
@@ -404,7 +406,7 @@ impl Browser {
         if self.destination_mode {
             let entry = Node::new(n.path.clone(), Rc::downgrade(node), false, false);
             entry.borrow_mut().create_entry = true;
-            children.push(entry);
+            children.insert(0, entry);
         }
         n.children = children;
         n.expanded = true;
@@ -426,7 +428,7 @@ impl Browser {
             if enabled && n.dir && n.expanded {
                 let entry = Node::new(n.path.clone(), Rc::downgrade(&node), false, false);
                 entry.borrow_mut().create_entry = true;
-                n.children.push(entry);
+                n.children.insert(0, entry);
             }
         }
     }
@@ -462,7 +464,8 @@ impl Browser {
                 loaded.insert(node.path.clone());
                 stack.extend(node.children.iter().cloned());
             }
-            self.temporary_focus.retain(|focus| loaded.contains(focus));
+            self.temporary_focus
+                .retain(|focus| loaded.contains(focus));
         }
         self.selected = self
             .visible()

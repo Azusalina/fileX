@@ -2326,7 +2326,7 @@ mod tree_tests {
                 .root
                 .borrow()
                 .children
-                .last()
+                .first()
                 .unwrap()
                 .borrow()
                 .create_entry
@@ -2426,8 +2426,20 @@ mod tree_tests {
             .find(|n| n.borrow().path == parent)
             .unwrap();
         ui.pane.browser.expand(&node, None);
-        assert!(node.borrow().children.last().unwrap().borrow().create_entry);
-        ui.pane.browser.selected = node.borrow().children.last().unwrap().clone();
+        assert!(node.borrow().children.first().unwrap().borrow().create_entry);
+        ui.pane.browser.refresh();
+        assert!(node.borrow().children.first().unwrap().borrow().create_entry);
+        for grouped in [false, true] {
+            ui.pane.browser.conf.grouped = grouped;
+            let layout = Layout::new(&ui.pane.browser);
+            let plus = node.borrow().children.first().unwrap().clone();
+            let plus_y = layout.items.iter().find(|p| Rc::ptr_eq(&p.node, &plus)).unwrap().y;
+            for child in &node.borrow().children {
+                let child_y = layout.items.iter().find(|p| Rc::ptr_eq(&p.node, child)).unwrap().y;
+                assert!(plus_y <= child_y);
+            }
+        }
+        ui.pane.browser.selected = node.borrow().children.first().unwrap().clone();
         assert_eq!(ui.pane.browser.target(), parent);
         ui.cancel_transfer();
         assert!(Rc::ptr_eq(&ui.pane.browser.selected, &node));
@@ -2603,7 +2615,7 @@ mod tree_tests {
             .find(|n| n.borrow().path == dest && !n.borrow().create_entry)
             .unwrap();
         ui.pane.browser.expand(&folder, None);
-        ui.pane.browser.selected = folder.borrow().children.last().unwrap().clone();
+        ui.pane.browser.selected = folder.borrow().children.first().unwrap().clone();
         assert!(ui.pane.browser.selected.borrow().create_entry);
         ui.action("enter").unwrap();
         assert_eq!(
