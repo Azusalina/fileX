@@ -197,6 +197,7 @@ pub struct Browser {
     pub search_key: Option<(String, PathBuf, bool)>,
     pub search_summary: String,
     pub destination_mode: bool,
+    pub temporary_focus: Vec<PathBuf>,
     git_cache: crate::git_status::Cache,
 }
 impl Browser {
@@ -214,18 +215,56 @@ impl Browser {
             search_key: None,
             search_summary: String::new(),
             destination_mode: false,
+            temporary_focus: Vec::new(),
             git_cache: Default::default(),
         };
         browser.expand(&root, None);
         Ok(browser)
     }
+    pub fn in_temporary_focus(&self, path: &Path, create_entry: bool) -> bool {
+        self.temporary_focus.iter().all(|focus| {
+            let Some(parent) = focus.parent() else {
+                return true;
+            };
+            // Only isolate the focused item's siblings. Other ancestor branches stay visible.
+            !path.starts_with(parent)
+                || path.starts_with(focus)
+                || !create_entry && path == parent
+        })
+    }
+    pub fn visible_children(&self, node: &NodeRef) -> Vec<NodeRef> {
+        node.borrow()
+            .children
+            .iter()
+            .filter(|child| {
+                let c = child.borrow();
+                self.in_temporary_focus(&c.path, c.create_entry)
+            })
+            .cloned()
+            .collect()
+    }
+    pub fn toggle_temporary_focus(&mut self) -> Result<String, String> {
+        if Rc::ptr_eq(&self.selected, &self.root) || self.selected.borrow().create_entry {
+            return Err("Select a file/folder below the root to temporarily focus".into());
+        }
+        let path = self.selected.borrow().path.clone();
+        self.search_key = None;
+        if self.temporary_focus.contains(&path) {
+            self.temporary_focus.retain(|focus| !focus.starts_with(&path));
+            return Ok("Temporary focus restored here and below".into());
+        }
+        self.temporary_focus.retain(|focus| focus.parent() != path.parent());
+        self.temporary_focus.push(path);
+        Ok("Temporary focus: siblings hidden here; F restores this level and below".into())
+    }
+
     pub fn visible(&self) -> Vec<NodeRef> {
         let mut result = vec![];
         let mut stack = vec![self.root.clone()];
         while let Some(node) = stack.pop() {
             let n = node.borrow();
             if n.expanded {
-                stack.extend(n.children.iter().rev().cloned())
+                stack.extend(self.visible_children(&node).into_iter().rev())
             }
             drop(n);
             result.push(node)
@@ -318,6 +357,10 @@ impl Browser {
                 links: info.as_ref().map_or(1, |m| m.nlink()),
             };
             if force == Some(entry.path.as_path())
+                || self
+                    .temporary_focus
+                    .iter()
+                    .any(|focus| focus.starts_with(&entry.path))
                 || old.get(&entry.path).is_some_and(|n| n.borrow().expanded)
             {
                 pinned.push(entry);
@@ -411,6 +454,16 @@ impl Browser {
                 stack.extend(node.borrow().children.iter().cloned())
             }
         }
+        if !self.temporary_focus.is_empty() {
+            let mut stack = vec![self.root.clone()];
+            let mut loaded = HashSet::new();
+            while let Some(node) = stack.pop() {
+                let node = node.borrow();
+                loaded.insert(node.path.clone());
+                stack.extend(node.children.iter().cloned());
+            }
+            self.temporary_focus.retain(|focus| loaded.contains(focus));
+        }
         self.selected = self
             .visible()
             .into_iter()
@@ -435,11 +488,10 @@ impl Browser {
                 nodes.push(node);
             } else if level < depth && node.borrow().expanded {
                 stack.extend(
-                    node.borrow()
-                        .children
-                        .iter()
+                    self.visible_children(&node)
+                        .into_iter()
                         .rev()
-                        .map(|child| (child.clone(), level + 1)),
+                        .map(|child| (child, level + 1)),
                 );
             }
         }
@@ -456,7 +508,7 @@ impl Browser {
     pub fn right(&mut self) {
         let node = self.selected.clone();
         if node.borrow().expanded {
-            let child = node.borrow().children.first().cloned();
+            let child = self.visible_children(&node).first().cloned();
             if let Some(child) = child {
                 self.selected = child
             }
@@ -486,6 +538,7 @@ impl Browser {
         Ok(())
     }
     pub fn focus_root(&mut self) -> String {
+        self.temporary_focus.clear();
         let node = if self.selected.borrow().dir && !self.selected.borrow().link {
             self.selected.clone()
         } else {
@@ -564,7 +617,7 @@ impl Browser {
             if node.borrow().dir && !node.borrow().link {
                 self.expand(&node, None);
                 limited |= node.borrow().omitted > 0;
-                stack.extend(node.borrow().children.iter().rev().cloned());
+                stack.extend(self.visible_children(&node).into_iter().rev());
             }
         }
         Ok(ui_format!(
@@ -586,9 +639,9 @@ impl Browser {
         }
         let mut stack = vec![self.selected.clone()];
         while let Some(node) = stack.pop() {
-            let mut n = node.borrow_mut();
-            n.expanded = false;
-            stack.extend(n.children.iter().cloned());
+            let children = self.visible_children(&node);
+            node.borrow_mut().expanded = false;
+            stack.extend(children);
         }
         Ok(label(
             "已收起选中目录的全部分支",
@@ -629,6 +682,9 @@ impl Browser {
             }
             let path = item.path();
             if self.conf.excluded_paths.iter().any(|p| path.starts_with(p)) {
+                continue;
+            }
+            if !self.in_temporary_focus(&path, false) {
                 continue;
             }
             if name.to_lowercase().contains(&needle) {
@@ -672,6 +728,13 @@ impl Browser {
         );
     }
     pub fn reveal(&mut self, path: &Path) -> Result<(), String> {
+        if !self.in_temporary_focus(path, false) {
+            self.temporary_focus.retain(|focus| {
+                focus.parent().is_none_or(|parent| !path.starts_with(parent)
+                    || path.starts_with(focus) || path == parent)
+            });
+            self.search_key = None;
+        }
         let root = self.root.borrow().path.clone();
         let relative = path.strip_prefix(&root).map_err(|e| e.to_string())?;
         let mut node = self.root.clone();
@@ -782,28 +845,26 @@ impl Layout {
             else {
                 break;
             };
-            let first = if !parent.borrow().children.iter().any(|n| {
-                self.items
-                    .iter()
-                    .any(|q| Rc::ptr_eq(&q.node, n) && q.y == p.y)
-            }) {
-                parent
-                    .borrow()
-                    .children
-                    .iter()
-                    .find(|n| {
-                        (n.borrow().dir || n.borrow().create_entry)
-                            == (node.borrow().dir || node.borrow().create_entry)
-                    })
-                    .cloned()
-            } else {
-                parent.borrow().children.first().cloned()
-            };
-            let Some(first) = first.and_then(|first| {
-                self.items
-                    .iter()
-                    .find(|item| Rc::ptr_eq(&item.node, &first))
-            }) else {
+            let siblings = self
+                .items
+                .iter()
+                .filter(|q| {
+                    q.node
+                        .borrow()
+                        .parent
+                        .upgrade()
+                        .is_some_and(|n| Rc::ptr_eq(&n, &parent))
+                })
+                .collect::<Vec<_>>();
+            let grouped = !siblings.iter().any(|q| q.y == p.y);
+            let category = node.borrow().dir || node.borrow().create_entry;
+            let Some(first) = siblings
+                .into_iter()
+                .filter(|q| {
+                    !grouped || (q.node.borrow().dir || q.node.borrow().create_entry) == category
+                })
+                .min_by_key(|q| q.y)
+            else {
                 break;
             };
             let branch = if first.y > p.y {
@@ -831,6 +892,10 @@ impl Layout {
             return Self::grouped(browser);
         }
         let nodes = browser.visible();
+        let children: HashMap<usize, Vec<NodeRef>> = nodes
+            .iter()
+            .map(|n| (Rc::as_ptr(n) as usize, browser.visible_children(n)))
+            .collect();
         let boxed = nodes.iter().any(|n| n.borrow().marked);
         let row_spacing = browser.conf.row_spacing.max(if boxed { 3 } else { 1 });
         let mut depths = HashMap::new();
@@ -859,8 +924,8 @@ impl Layout {
         let mut heights = HashMap::new();
         for node in nodes.iter().rev() {
             let n = node.borrow();
-            let h = if n.expanded && !n.children.is_empty() {
-                n.children
+            let h = if n.expanded && !children[&(Rc::as_ptr(node) as usize)].is_empty() {
+                children[&(Rc::as_ptr(node) as usize)]
                     .iter()
                     .map(|c| heights[&(Rc::as_ptr(c) as usize)])
                     .sum()
@@ -887,7 +952,7 @@ impl Layout {
                 let n = node.borrow();
                 if n.expanded {
                     let mut row = y;
-                    for child in &n.children {
+                    for child in &children[&id] {
                         let child_id = Rc::as_ptr(child) as usize;
                         rows.insert(child_id, row);
                         row += heights[&child_id]
@@ -905,13 +970,14 @@ impl Layout {
         let mut lines = vec![];
         for item in &items {
             let n = item.node.borrow();
-            if n.expanded && !n.children.is_empty() {
-                let first = locations[&(Rc::as_ptr(&n.children[0]) as usize)];
-                let last = locations[&(Rc::as_ptr(n.children.last().unwrap()) as usize)];
+            let offspring = &children[&(Rc::as_ptr(&item.node) as usize)];
+            if n.expanded && !offspring.is_empty() {
+                let first = locations[&(Rc::as_ptr(&offspring[0]) as usize)];
+                let last = locations[&(Rc::as_ptr(offspring.last().unwrap()) as usize)];
                 let branch = first.0 - browser.conf.gap + 2;
                 lines.push((item.x + item.label.width(), item.y, branch, item.y));
                 lines.push((branch, item.y, branch, last.1));
-                for child in &n.children {
+                for child in offspring {
                     let (x, y, _) = locations[&(Rc::as_ptr(child) as usize)];
                     lines.push((branch, y, x - 1, y));
                 }
@@ -926,6 +992,10 @@ impl Layout {
     }
     fn grouped(browser: &Browser) -> Self {
         let nodes = browser.visible();
+        let children: HashMap<usize, Vec<NodeRef>> = nodes
+            .iter()
+            .map(|n| (Rc::as_ptr(n) as usize, browser.visible_children(n)))
+            .collect();
         let boxed = nodes.iter().any(|n| n.borrow().marked);
         let spacing = browser.conf.row_spacing.max(if boxed { 3 } else { 1 });
         let gap = browser.conf.gap.max(4);
@@ -938,7 +1008,7 @@ impl Layout {
             let own = text.0.width();
             let (mut dw, mut dh, mut fw, mut fh) = (0, 0, 0, 0);
             if n.expanded {
-                for child in &n.children {
+                for child in &children[&id] {
                     let (w, h) = sizes[&(Rc::as_ptr(child) as usize)];
                     if child.borrow().dir || child.borrow().create_entry {
                         dw = dw.max(w);
@@ -968,21 +1038,19 @@ impl Layout {
             let (x, y) = positions[&id];
             let (text, link_start) = labels.remove(&id).unwrap();
             let n = node.borrow();
-            if n.expanded && !n.children.is_empty() {
-                let dw = n
-                    .children
+            if n.expanded && !children[&id].is_empty() {
+                let dw = children[&id]
                     .iter()
                     .filter(|c| c.borrow().dir || c.borrow().create_entry)
                     .map(|c| sizes[&(Rc::as_ptr(c) as usize)].0)
                     .max()
                     .unwrap_or(0);
                 for directories in [true, false] {
-                    let children = n
-                        .children
+                    let group_children = children[&id]
                         .iter()
                         .filter(|c| (c.borrow().dir || c.borrow().create_entry) == directories)
                         .collect::<Vec<_>>();
-                    if children.is_empty() {
+                    if group_children.is_empty() {
                         continue;
                     }
                     let cx =
@@ -991,7 +1059,7 @@ impl Layout {
                     let mut cy = y + spacing;
                     let mut last = cy;
                     lines.push((x + text.width(), y, branch, y));
-                    for child in children {
+                    for child in group_children {
                         let cid = Rc::as_ptr(child) as usize;
                         positions.insert(cid, (cx, cy));
                         lines.push((branch, cy, cx - 1, cy));

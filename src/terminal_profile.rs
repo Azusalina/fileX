@@ -27,8 +27,24 @@ pub struct Profile {
     pub colors: Colors,
 }
 static PROFILE: OnceLock<Profile> = OnceLock::new();
+static FOREGROUND_COMMAND: AtomicBool = AtomicBool::new(false);
+pub struct ForegroundCommand;
+impl ForegroundCommand {
+    pub fn new() -> Self {
+        FOREGROUND_COMMAND.store(true, Ordering::Relaxed);
+        Self
+    }
+}
+impl Drop for ForegroundCommand {
+    fn drop(&mut self) {
+        FOREGROUND_COMMAND.store(false, Ordering::Relaxed);
+    }
+}
 static STOP: AtomicBool = AtomicBool::new(false);
-extern "C" fn stop(_: libc::c_int) {
+extern "C" fn stop(signal: libc::c_int) {
+    if signal == libc::SIGINT && FOREGROUND_COMMAND.load(Ordering::Relaxed) {
+        return;
+    }
     STOP.store(true, Ordering::Relaxed);
 }
 pub fn stopping() -> bool {

@@ -11,9 +11,9 @@ DEFAULT_KEYS = {
     "quit": "Q", "exit_here": "x", "dashboard": "q", "dashboard_narrow": "[", "dashboard_widen": "]", "link_info": "I", "expand": "l", "collapse": "h", "down": "j", "up": "k",
     "expand_all": "E", "collapse_all": "C", "open": "o", "open_with": "w",
     "preview": "p", "hidden": ".", "refresh": "Ctrl+r", "search": "Ctrl+f",
-    "next_match": "n", "previous_match": "N", "goto": "g", "parent": "Left", "focus_root": "f",
+    "next_match": "n", "previous_match": "N", "goto": "g", "parent": "Left", "focus_root": "f", "temporary_focus": "F",
     "new_file": "a", "new_folder": "A", "rename": "r", "copy": "c", "copy_path": "Ctrl+Alt+c",
-    "move": "m", "trash": "D", "run_background": "!", "git_menu": "G", "help": "?", "config": ",",
+    "move": "m", "trash": "D", "run_background": "!", "run_foreground": "@", "git_menu": "G", "help": "?", "config": ",",
     "toggle_grouped": "v", "reorder": "O", "hide_item": "z", "hidden_items": "Z", "toolkit": "T",
 }
 DEFAULT_OPENERS = {
@@ -74,7 +74,7 @@ class Config:
     max_loaded_nodes: int = 6000
     row_spacing: int = 1
     highlight_path: bool = True
-    grouped: bool = True
+    grouped: bool = False
     excluded_paths: list = field(default_factory=list)
     open_in_right_pane: bool = True
     auto_english: bool = True
@@ -229,7 +229,7 @@ def load_config(path=None):
         if code == "\x0e" and action != "new_file" or code == "ctrl+shift+n" and action != "new_folder":
             raise ValueError("Ctrl+N / Ctrl+Shift+N 保留给新建文件 / 目录")
         conf.keys[action] = key
-    for action, alternatives in [("exit_here", ["z", "b", "t", "s", "Ctrl+Alt+x"]), ("link_info", ["i", "B", "T", "Ctrl+Alt+i"]), ("dashboard_narrow", ["{", "-", "Ctrl+Alt+b"]), ("dashboard_widen", ["}", "+", "Ctrl+Alt+w"]), ("toggle_grouped", ["V", "Ctrl+Alt+v"]), ("reorder", ["Ctrl+Alt+o"]), ("hide_item", ["Ctrl+Alt+h"]), ("hidden_items", ["Ctrl+Alt+z"])]:
+    for action, alternatives in [("exit_here", ["z", "b", "t", "s", "Ctrl+Alt+x"]), ("link_info", ["i", "B", "T", "Ctrl+Alt+i"]), ("dashboard_narrow", ["{", "-", "Ctrl+Alt+b"]), ("dashboard_widen", ["}", "+", "Ctrl+Alt+w"]), ("run_foreground", ["Ctrl+Alt+j"]), ("temporary_focus", ["Ctrl+Alt+f"]), ("toggle_grouped", ["V", "Ctrl+Alt+v"]), ("reorder", ["Ctrl+Alt+o"]), ("hide_item", ["Ctrl+Alt+h"]), ("hidden_items", ["Ctrl+Alt+z"])]:
         if action not in keys:
             occupied = {key_code(value) for name, value in conf.keys.items() if name != action}
             if key_code(conf.keys[action]) in occupied:

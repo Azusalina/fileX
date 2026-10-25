@@ -30,6 +30,41 @@ fn log_directory() -> Result<PathBuf, String> {
 pub fn start(directory: &Path, text: &str) -> Result<Started, String> {
     spawn_in(directory, text, &log_directory()?)
 }
+/// An interactive shell in the selected folder, attached to the caller's terminal.
+pub fn foreground_command(directory: &Path, text: &str) -> Result<Command, String> {
+    if !directory.is_dir() {
+        return Err("Select an existing folder to run a command".into());
+    }
+    if text.trim().is_empty() {
+        return Err("Enter a command".into());
+    }
+    #[cfg(unix)]
+    let mut command = {
+        let shell = std::env::var_os("SHELL")
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "/bin/sh".into());
+        let mut command = Command::new(shell);
+        command.arg("-c").arg(text);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        let mut command =
+            Command::new(std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into()));
+        command
+            .args(["/D", "/S", "/C"])
+            .raw_arg(format!("\"{text}\""));
+        command
+    };
+    command
+        .current_dir(directory)
+        .env_remove("FILEX_CWD_FILE")
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    Ok(command)
+}
 fn spawn_in(directory: &Path, text: &str, logs: &Path) -> Result<Started, String> {
     if text.trim().is_empty() {
         return Err("Enter a command".into());

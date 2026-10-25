@@ -299,7 +299,8 @@ fn old_config_migrates_to_horizontal_and_new_shortcuts() {
     let mut browser = Browser::new(&fixture.0, conf).unwrap();
     browser.expand_all().unwrap();
     let layout = Layout::new(&browser);
-    assert!(layout.items[0].y < layout.items[1].y);
+    assert!(!browser.conf.grouped);
+    assert_eq!(layout.items[0].y, layout.items[1].y);
     assert!(layout.items[1].x > layout.items[0].x);
 }
 
@@ -631,4 +632,190 @@ fn explicit_link_target_resolves_relative_absolute_chained_and_broken_paths() {
     symlink("cycle", &cycle).unwrap();
     assert!(files::link_target(&cycle).is_err());
     assert!(files::link_target(&target).is_err());
+}
+
+#[test]
+fn temporary_focus_restores_original_nodes_expansion_and_navigation() {
+    let f = Fixture::new();
+    let mut b = Browser::new(&f.0, Config::default()).unwrap();
+    b.expand_all().unwrap();
+    let before = b.visible();
+    let root = b.root.clone();
+    let left = before
+        .iter()
+        .find(|n| n.borrow().path == f.0.join("left"))
+        .unwrap()
+        .clone();
+    let right = before
+        .iter()
+        .find(|n| n.borrow().path == f.0.join("right"))
+        .unwrap()
+        .clone();
+    b.selected = left.clone();
+    b.toggle_temporary_focus().unwrap();
+    assert!(
+        b.visible()
+            .iter()
+            .all(|n| n.borrow().path == f.0 || n.borrow().path.starts_with(f.0.join("left")))
+    );
+    b.step(1);
+    assert!(Rc::ptr_eq(&b.selected, &left));
+    b.step(-1);
+    assert!(Rc::ptr_eq(&b.selected, &left));
+    b.back().unwrap();
+    b.right();
+    assert!(Rc::ptr_eq(&b.selected, &left));
+    assert!(right.borrow().expanded);
+    for grouped in [true, false] {
+        b.conf.grouped = grouped;
+        let layout = Layout::new(&b);
+        assert!(!layout.plain().contains("right"));
+        assert_eq!(layout.items.len(), b.visible().len());
+        let cells = layout.cells(0, 0, layout.width, layout.height);
+        let route = layout.path_cells(&b.selected, b.conf.gap, 0, 0, layout.width, layout.height);
+        assert!(route.iter().all(|p| cells.contains_key(p)));
+    }
+    b.toggle_temporary_focus().unwrap();
+    assert!(Rc::ptr_eq(&root, &b.root));
+    let after = b.visible();
+    assert_eq!(before.len(), after.len());
+    assert!(before.iter().zip(&after).all(|(a, z)| Rc::ptr_eq(a, z)));
+    b.step(1);
+    assert!(Rc::ptr_eq(&b.selected, &right));
+}
+#[test]
+fn temporary_focus_file_keeps_refresh_search_scoped_and_recovers_after_deletion() {
+    let f = Fixture::new();
+    let mut b = Browser::new(&f.0, Config::default()).unwrap();
+    let file = f.0.join("left/deep/needle 中文.PY");
+    b.reveal(&file).unwrap();
+    b.toggle_temporary_focus().unwrap();
+    b.refresh();
+    assert_eq!(b.selected.borrow().path, file);
+    assert_eq!(b.visible().len(), 5);
+    b.search("needle");
+    assert!(b.results.contains(&file));
+    assert!(b.results.contains(&f.0.join("right/deep/needle 中文.PY")));
+    for grouped in [true, false] {
+        b.conf.grouped = grouped;
+        let l = Layout::new(&b);
+        assert_eq!(l.items.len(), 5);
+        assert!(l.plain().contains("right"));
+    }
+    fs::remove_file(&file).unwrap();
+    b.refresh();
+    assert!(b.temporary_focus.is_empty());
+    assert!(
+        b.visible()
+            .iter()
+            .any(|n| n.borrow().path == f.0.join("right"))
+    );
+    assert!(b.selected.borrow().dir);
+}
+#[test]
+fn temporary_focus_rejects_root_and_clears_when_root_is_explicitly_changed() {
+    let f = Fixture::new();
+    let mut b = Browser::new(&f.0, Config::default()).unwrap();
+    assert!(b.toggle_temporary_focus().is_err());
+    b.right();
+    b.toggle_temporary_focus().unwrap();
+    b.set_root(f.0.join("right").to_str().unwrap()).unwrap();
+    assert!(b.temporary_focus.is_empty());
+    b.right();
+    b.toggle_temporary_focus().unwrap();
+    b.focus_root();
+    assert!(b.temporary_focus.is_empty());
+}
+
+#[test]
+fn temporary_focus_expand_collapse_all_leaves_other_branches_alone() {
+    let f = Fixture::new();
+    let mut b = Browser::new(&f.0, Config::default()).unwrap();
+    let right = b
+        .root
+        .borrow()
+        .children
+        .iter()
+        .find(|n| n.borrow().path == f.0.join("right"))
+        .unwrap()
+        .clone();
+    b.right();
+    b.toggle_temporary_focus().unwrap();
+    b.selected = b.root.clone();
+    b.expand_all().unwrap();
+    assert!(!right.borrow().expanded);
+    right.borrow_mut().expanded = true;
+    b.collapse_all().unwrap();
+    assert!(right.borrow().expanded);
+}
+
+#[test]
+fn temporary_focus_only_hides_siblings_at_its_parent() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.0.join("left/other/child")).unwrap();
+    fs::write(f.0.join("left/deep/sibling.txt"), "hidden").unwrap();
+    let file = f.0.join("left/deep/needle 中文.PY");
+    let mut b = Browser::new(&f.0, Config::default()).unwrap();
+    b.expand_all().unwrap();
+    let before = b.visible().len();
+    b.reveal(&file).unwrap();
+    b.toggle_temporary_focus().unwrap();
+    assert_eq!(b.visible().len(), before - 1);
+    assert!(!b.in_temporary_focus(&f.0.join("left/deep/sibling.txt"), false));
+    assert!(!b.in_temporary_focus(&f.0.join("left/deep/+"), true));
+    assert!(b.in_temporary_focus(&f.0.join("left/other/child"), false));
+    assert!(b.in_temporary_focus(&f.0.join("right/deep"), false));
+    b.back().unwrap();
+    b.step(1);
+    assert_eq!(b.selected.borrow().path, f.0.join("left/other"));
+    b.right();
+    assert_eq!(b.selected.borrow().path, f.0.join("left/other/child"));
+    b.search("sibling.txt");
+    assert!(b.results.is_empty());
+    b.search("needle");
+    assert_eq!(b.results.len(), 2);
+    for grouped in [true, false] {
+        b.conf.grouped = grouped;
+        let layout = Layout::new(&b);
+        assert!(layout.plain().contains("right"));
+        assert!(layout.plain().contains("other"));
+        assert!(!layout.plain().contains("sibling.txt"));
+    }
+    b.reveal(&file).unwrap();
+    b.toggle_temporary_focus().unwrap();
+    assert_eq!(b.visible().len(), before);
+}
+
+#[test]
+fn temporary_focus_per_parent_and_parent_restore_cascades() {
+    let f = Fixture::new();
+    fs::create_dir_all(f.0.join("left/other")).unwrap();
+    fs::create_dir_all(f.0.join("right/other")).unwrap();
+    let mut b = Browser::new(&f.0, Config::default()).unwrap();
+    let left = f.0.join("left/deep");
+    let leaf = left.join("needle 中文.PY");
+    let right = f.0.join("right/deep");
+    for path in [&left, &leaf, &right] {
+        b.reveal(path).unwrap();
+        b.toggle_temporary_focus().unwrap();
+    }
+    assert_eq!(b.temporary_focus.len(), 3);
+    b.refresh();
+    assert_eq!(b.temporary_focus.len(), 3);
+    assert!(!b.in_temporary_focus(&f.0.join("left/other"), false));
+    assert!(!b.in_temporary_focus(&f.0.join("right/other"), false));
+    b.reveal(&leaf).unwrap();
+    b.toggle_temporary_focus().unwrap();
+    assert_eq!(b.temporary_focus.len(), 2);
+    assert!(b.temporary_focus.contains(&left));
+    b.toggle_temporary_focus().unwrap();
+    b.reveal(&left).unwrap();
+    b.toggle_temporary_focus().unwrap();
+    assert_eq!(b.temporary_focus, [right.clone()]);
+    assert!(b.in_temporary_focus(&f.0.join("left/other"), false));
+    assert!(!b.in_temporary_focus(&f.0.join("right/other"), false));
+    fs::remove_file(right.join("needle 中文.PY")).unwrap();
+    fs::remove_dir(&right).unwrap();
+    b.refresh();
+    assert!(b.temporary_focus.is_empty());
 }

@@ -156,7 +156,7 @@ class TtyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             base=Path(d);left=base/'left';left.mkdir();dest=base/'dest';dest.mkdir()
             (left/'copy.txt').write_text('copy');(left/'move.txt').write_text('move')
-            conf=base/'settings.conf';conf.write_text('');callback=base/'cwd'
+            conf=base/'settings.conf';conf.write_text('[layout]\ngrouped=true\n');callback=base/'cwd'
             terminal=self.start(left,conf,extra={'FILEX_CWD_FILE':str(callback)})
             terminal.send('\x06copy.txt\rc');terminal.send('t\x15'+str(dest)+'\r')
             terminal.until(lambda:(dest/'copy.txt').exists())

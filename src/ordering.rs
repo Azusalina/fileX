@@ -271,6 +271,8 @@ mod tests {
             fs::write(p, "test").unwrap();
         }
         let mut browser = Browser::new(&f.0, Config::default()).unwrap();
+        assert!(!browser.conf.grouped);
+        browser.conf.grouped = true;
         browser.expand_all().unwrap();
         let layout = Layout::new(&browser);
         let cells = layout.cells(0, 0, layout.width, layout.height);

@@ -1078,6 +1078,14 @@ impl Ui {
                 self.pane.browser.results.len()
             )
         };
+        let footer = if !self.pane.browser.temporary_focus.is_empty() {
+            format!(
+                "FOCUS [{} toggle here] | {footer}",
+                self.pane.browser.conf.keys["temporary_focus"]
+            )
+        } else {
+            footer
+        };
         put(&mut out, h - 1, 1, &footer, w, None, false)?;
         queue!(out, SetAttribute(Attribute::Reset), ResetColor).map_err(ioerr)?;
         out.flush().map_err(ioerr)
@@ -1211,6 +1219,55 @@ impl Ui {
                 _ => {}
             }
         }
+    }
+    fn run_foreground(&mut self) -> Result<(), String> {
+        let directory = self.selection_path();
+        if !directory.is_dir() {
+            return Err("Select a folder to run a foreground command".into());
+        }
+        let Some(text) = self.prompt("Run command in folder (output shown)", "")? else {
+            return Ok(());
+        };
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        let mut command = crate::jobs::foreground_command(&directory, &text)?;
+        terminal::disable_raw_mode().map_err(ioerr)?;
+        Guard::leave()?;
+        println!(
+            "{}\n> {}",
+            clean(&directory.to_string_lossy()),
+            clean(&text)
+        );
+        let result = {
+            let _foreground = terminal_profile::ForegroundCommand::new();
+            command.status().map_err(ioerr)
+        };
+        match &result {
+            Ok(status) => println!("\nCommand exited ({status}) - Enter to return to filex"),
+            Err(error) => println!("\nCommand failed: {error} - Enter to return to filex"),
+        }
+        terminal::enable_raw_mode().map_err(ioerr)?;
+        let mut read_error = None;
+        loop {
+            match read_key(self.pane.browser.conf.auto_english) {
+                Ok(key) if ["enter", "escape", "\x03"].contains(&key.as_str()) => break,
+                Ok(_) => {}
+                Err(error) => {
+                    read_error = Some(error);
+                    break;
+                }
+            }
+        }
+        Guard::enter()?;
+        self.refresh_panes();
+        self.pane.focus = true;
+        if let Some(error) = read_error {
+            return Err(error);
+        }
+        let status = result?;
+        self.message = format!("Command exited: {status}");
+        Ok(())
     }
     fn git_menu(&mut self) -> Result<(), String> {
         use crate::git_actions::{self, Action};
@@ -1784,6 +1841,7 @@ impl Ui {
                 "expand_all",
                 "collapse_all",
                 "hidden",
+                "temporary_focus",
                 "refresh",
                 "goto",
                 "search",
@@ -1814,6 +1872,12 @@ impl Ui {
             self.pane.link_target = None;
         }
         match action.as_str() {
+            "temporary_focus" => {
+                self.message = self.pane.browser.toggle_temporary_focus()?;
+                self.pane.focus = true;
+                self.pane.link_target = None;
+                self.meta_path = None;
+            }
             "toggle_grouped" => self.toggle_grouped()?,
             "reorder" => self.reorder()?,
             "hide_item" => self.hide_item()?,
@@ -1931,9 +1995,12 @@ impl Ui {
                     .stderr(std::process::Stdio::null())
                     .spawn()
                     .map_err(|e| format!("Toolkit: {}: {e}", launcher.display()))?;
-                std::thread::spawn(move || { let _ = child.wait(); });
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
                 self.message = "Toolkit: choose a method, then the result path and filename".into();
             }
+            "run_foreground" => self.run_foreground()?,
             "run_background" => {
                 let directory = self.selection_path();
                 if !directory.is_dir() {
@@ -2073,9 +2140,9 @@ impl Ui {
                     .collect::<Vec<_>>()
                     .join("\n");
                 if terminal_profile::get().ascii {
-                    text.push_str("\n\nUp/Down (k/j): all visible peers at the same depth; wrap around.\nRight (l): expand / enter child; Left: parent (mirrored on right pane).\nh collapse; E/C expand/collapse all; . hidden files; f focus root.\na / Ctrl+N new file; A new folder (Ctrl+Shift+N may equal Ctrl+N on TTY).\nr rename; c/m copy/move; Delete/D trash, Enter again confirms, Esc cancels.\ny / Ctrl+Alt+C copy absolute path; Ctrl+V paste it in input prompts.\nPaths use the Wayland clipboard and an internal clipboard.\nx exit to selected folder (file: parent); Q / Ctrl+C quit.\n! run a shell command in the selected folder in background (PID/log shown).\nG Git menu: add selected / commit staged / push / add ALL+commit+push.\nEnter expands folders (cursor stays); files: open with. w menu; o default; p preview; q dashboard; I link information.\nHeadless defaults: Nano, Neovim, Vim, then built-in preview; no automatic script execution.\nPython / Rscript / Bash can be explicitly selected to run scripts.\nCtrl+F / / search; Up/Down or n/N cycle matches, Esc exits find mode; g / Ctrl+L change root.\nCtrl+R / F5 refresh; comma reload config; [ / ] dashboard width.\nv toggle grouped/classic tree; O reorder and save this directory; z hide item; Z restore hidden items.\nH/L pan; PgUp/PgDn page peers; Ctrl+U clear input.\nTerminal openers reuse an idle pane on the right in tmux.\nSpace marks/unmarks files/folders; Esc clears marks. c/m: choose destination with arrows, Enter on + places items in its folder; + places here, A creates folder; t types a destination file/directory path; Esc cancels. Existing regular files require Enter confirmation to replace; folders/links are not replaced. Rename prompts: Left/Right/Home/End, Delete/Backspace edit at cursor.");
+                    text.push_str("\n\nUp/Down (k/j): all visible peers at the same depth; wrap around.\nRight (l): expand / enter child; Left: parent (mirrored on right pane).\nh collapse; E/C expand/collapse all; . hidden files; f focus root; F focus this level / restore this level and descendants.\na / Ctrl+N new file; A new folder (Ctrl+Shift+N may equal Ctrl+N on TTY).\nr rename; c/m copy/move; Delete/D trash, Enter again confirms, Esc cancels.\ny / Ctrl+Alt+C copy absolute path; Ctrl+V paste it in input prompts.\nPaths use the Wayland clipboard and an internal clipboard.\nx exit to selected folder (file: parent); Q / Ctrl+C quit.\n! run a shell command in the selected folder in background (PID/log shown).\n@ run a command in the folder with terminal output and interactive input; Enter returns.\nG Git menu: add selected / commit staged / push / add ALL+commit+push.\nEnter expands folders (cursor stays); files: open with. w menu; o default; p preview; q dashboard; I link information.\nHeadless defaults: Nano, Neovim, Vim, then built-in preview; no automatic script execution.\nPython / Rscript / Bash can be explicitly selected to run scripts.\nCtrl+F / / search; Up/Down or n/N cycle matches, Esc exits find mode; g / Ctrl+L change root.\nCtrl+R / F5 refresh; comma reload config; [ / ] dashboard width.\nv toggle grouped/classic tree; O reorder and save this directory; z hide item; Z restore hidden items.\nH/L pan; PgUp/PgDn page peers; Ctrl+U clear input.\nTerminal openers reuse an idle pane on the right in tmux.\nSpace marks/unmarks files/folders; Esc clears marks. c/m: choose destination with arrows, Enter on + places items in its folder; + places here, A creates folder; t types a destination file/directory path; Esc cancels. Existing regular files require Enter confirmation to replace; folders/links are not replaced. Rename prompts: Left/Right/Home/End, Delete/Backspace edit at cursor.");
                 } else {
-                    text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C / y 复制选中项目的绝对路径；输入框 Ctrl+V 粘贴\nf 当前目录设为根并刷新\nEnter 展开目录（光标保留）/ 文件选择打开方式 · w 打开菜单 · o 默认程序\nCtrl+F / / 搜索，↑↓ 匹配项，Esc 退出搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nv 分组/普通树切换 · O 调整并保存当前同级顺序 · z 隐藏 · Z 管理恢复\nc/m 后方向键选目标目录，Enter 执行 / Esc 取消\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\nSpace 多选，Esc 清空；c/m 后方向键选目标目录，选中 + 后 Enter 放入该目录；+ 键放入当前目标，A 新建目录，t 输入地址，Esc 取消。已有普通文件需再次 Enter 确认替换。输入框支持左右/Home/End及光标处增删。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
+                    text.push_str("\n\n横向：↑↓ 同层跨父目录，首尾循环 · → 展开 / 进入子级 · ← 返回父级\n根节点的返回父级键引入上级目录。\nh 收起 · [ / ] 缩窄 / 加宽 q 信息面板（每次 4 列）\nx 退出并将启动 terminal 切到选中目录（文件使用父目录）\n! 后台命令；@ 前台命令，显示输出并接受交互输入，结束 Enter 返回\nCtrl+N 新建文件 · Ctrl+Shift+N 新建目录（a/A 也可）\n↗ 软链接 · H×N 硬链接数 · q 查看信息 · I 查看完整链接路径\nr / Shift+R 重命名 · Ctrl+R / F5 / Ctrl+F5 刷新\nCtrl+Alt+C / y 复制选中项目的绝对路径；输入框 Ctrl+V 粘贴\nf 当前目录设为根并刷新 · F 临时聚焦/恢复分支\nEnter 展开目录（光标保留）/ 文件选择打开方式 · w 打开菜单 · o 默认程序\nCtrl+F / / 搜索，↑↓ 匹配项，Esc 退出搜索 · q 右侧时间 / 大小\nDelete / D 移到回收站，再次按 Enter 确认\nv 分组/普通树切换 · O 调整并保存当前同级顺序 · z 隐藏 · Z 管理恢复\nc/m 后方向键选目标目录，Enter 执行 / Esc 取消\nE/C 展开 / 收起全部\nH/L 横移 · PgUp/PgDn 同级翻页 · Ctrl+U 清空输入\n终端程序优先使用 tmux 右侧空闲 pane。\nSpace 多选，Esc 清空；c/m 后方向键选目标目录，选中 + 后 Enter 放入该目录；+ 键放入当前目标，A 新建目录，t 输入地址，Esc 取消。已有普通文件需再次 Enter 确认替换。输入框支持左右/Home/End及光标处增删。\n缓存达到上限时请收起部分分支或增大 max_loaded_nodes。");
                 }
                 self.pager(label("filex 快捷键", "filex keys"), &text)?
             }
