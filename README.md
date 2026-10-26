@@ -17,7 +17,7 @@ filex | less        # 非交互输出自动打印当前目录的一层树
 filex --print-tree --ascii > tree.txt
 ```
 
-也可直接运行 `./filex.sh`，无须 shell 函数。首次编译需要 Rust / Cargo 1.88+ 和 C 链接器；已有 release 二进制可直接运行，浏览、搜索、新建、重命名、复制、移动和预览不需要 Python、GUI、Wayland 或桌面服务。回收站需要 glib2 的 `gio`；终端编辑器可选 Nano / Neovim / Vim：
+`filex --gui [目录]` 打开图形界面版本 [filex-linux-gui](../filex-linux-gui/README.md)（同一配置和快捷键，脱离终端运行；需先在该目录运行 `./scripts/install.sh`）。也可直接运行 `./filex.sh`，无须 shell 函数。首次编译需要 Rust / Cargo 1.88+ 和 C 链接器；已有 release 二进制可直接运行，浏览、搜索、新建、重命名、复制、移动和预览不需要 Python、GUI、Wayland 或桌面服务。回收站需要 glib2 的 `gio`；终端编辑器可选 Nano / Neovim / Vim：
 
 ```bash
 sudo pacman -S --needed base-devel rust python glib2 nano
