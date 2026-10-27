@@ -264,3 +264,7 @@ Ctrl+F（或 `/`）输入关键词并 Enter 后进入搜索模式：↑／↓ �
 2026-10-25 mv/cp 放入位置置顶：目标选择模式中，每个已展开目录的虚拟 + 固定为首项，刷新、新展开目录和分组树均保持；右键进入后可直接选中 +，Enter 放入该目录。退出传输模式移除虚拟项，实际文件排序不变。两产品各 57 项 Rust 测试通过，Linux 6 项实际 PTY 光标操作检查通过（含已有文件／子目录的目标目录、复制、移动、覆盖和取消）；Linux 与 Windows release 已构建，Windows 未实机验证。
 
 2026-10-26 图形界面入口：`filex.sh` 识别任意位置的 `--gui`，以剩余参数用 `setsid -f` 启动 `~/.local/bin/filex-gui`（缺失时使用或编译 `../filex-linux-gui`），并清除 `FILEX_CWD_FILE` 后立即返回 shell；不带 `--gui` 时 TUI 行为不变。图形界面直接编译本产品的模型、文件操作、排序与 Git 模块，见 [../filex-linux-gui/description.md](../filex-linux-gui/description.md)。经 Bash 函数实测：返回码 0，GUI 脱离终端运行；`--print-tree` 等 TUI 路径不受影响。
+
+## 独立仓库迁移（2026-10-27）
+
+源码及本地数据迁至 `/home/a/Documents/products/filex`，已有提交历史保留。现在使用本项目自己的 `.git` 和 `origin` 独立提交、推送；不再通过 `someProducts` 的 push hook 发布。本次目录／仓库重命名保留配置目录、应用名称和已有用户数据。

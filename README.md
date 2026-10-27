@@ -17,7 +17,7 @@ filex | less        # 非交互输出自动打印当前目录的一层树
 filex --print-tree --ascii > tree.txt
 ```
 
-`filex --gui [目录]` 打开图形界面版本 [filex-linux-gui](../filex-linux-gui/README.md)（同一配置和快捷键，脱离终端运行；需先在该目录运行 `./scripts/install.sh`）。也可直接运行 `./filex.sh`，无须 shell 函数。首次编译需要 Rust / Cargo 1.88+ 和 C 链接器；已有 release 二进制可直接运行，浏览、搜索、新建、重命名、复制、移动和预览不需要 Python、GUI、Wayland 或桌面服务。回收站需要 glib2 的 `gio`；终端编辑器可选 Nano / Neovim / Vim：
+`filex --gui [目录]` 打开图形界面版本 [filex-linux-gui](https://github.com/Azusalina/filex-linux-gui/blob/master/README.md)（同一配置和快捷键，脱离终端运行；需先在该目录运行 `./scripts/install.sh`）。也可直接运行 `./filex.sh`，无须 shell 函数。首次编译需要 Rust / Cargo 1.88+ 和 C 链接器；已有 release 二进制可直接运行，浏览、搜索、新建、重命名、复制、移动和预览不需要 Python、GUI、Wayland 或桌面服务。回收站需要 glib2 的 `gio`；终端编辑器可选 Nano / Neovim / Vim：
 
 ```bash
 sudo pacman -S --needed base-devel rust python glib2 nano
@@ -94,7 +94,7 @@ Enter 在 folder 上直接展开子树，保留其他已展开分支；子级仍
 
 桌面会话的 TUI 启动及重新获得焦点时自动使用 Fcitx5 英文键盘，退出后恢复启动前的输入法；可在 `[input_method]` 设置 `auto_english=false`。`Enter` 选择 Python / Rscript / Bash 执行，分别运行 `python 文件绝对路径`、`Rscript 文件绝对路径`、`bash -- 文件绝对路径`，工作目录为脚本所在目录；当前终端执行结束后按 Enter 返回；也可把 `.py` / `.r` / `.sh` 默认方式改为 `python` / `rscript` / `bash`。Python、编辑器、Node 和浏览器是外部程序。没有 `python` 命令但存在 `python3` 时，Python 执行项自动使用 `python3`。
 
-`.md` / `.markdown` 默认先复制绝对路径，再用相邻 [toolkit](../toolkit/README.md) 渲染并在 Firefox 新标签页打开，保存后自动更新。状态栏显示预览就绪 URL，启动失败会显示原因。需要 Node.js 22+、Firefox，以及在 toolkit 目录完成 `npm install`；本机已具备。预览使用随机本地端口，每个文件独立，不占用 toolkit 原有的 4177 端口。没有预览连接且无请求 30 分钟后自动关闭对应渲染进程。Markdown 默认打开项可在配置中覆盖，`command` 内的 `{toolkit}` 可改为其他 toolkit 的绝对目录。`.js`、`.mjs` 默认金色 `#FFD700`；`.r`、`.cpp`、`.sh`、`.mp3`、`.mp4` 也有默认颜色，大小写不敏感。
+`.md` / `.markdown` 默认先复制绝对路径，再用相邻 [toolkit](https://github.com/Azusalina/toolkit/blob/master/README.md) 渲染并在 Firefox 新标签页打开，保存后自动更新。状态栏显示预览就绪 URL，启动失败会显示原因。需要 Node.js 22+、Firefox，以及在 toolkit 目录完成 `npm install`；本机已具备。预览使用随机本地端口，每个文件独立，不占用 toolkit 原有的 4177 端口。没有预览连接且无请求 30 分钟后自动关闭对应渲染进程。Markdown 默认打开项可在配置中覆盖，`command` 内的 `{toolkit}` 可改为其他 toolkit 的绝对目录。`.js`、`.mjs` 默认金色 `#FFD700`；`.r`、`.cpp`、`.sh`、`.mp3`、`.mp4` 也有默认颜色，大小写不敏感。
 
 个人配置位于 `~/.config/fileX/filex.conf`（遵循 XDG_CONFIG_HOME），本机已创建。项目只保留 [filex.conf](filex.conf) 作为主配置的软链接入口，重复的 `fileX.conf` 已移除；编辑并保存后，TUI 按 `,` 重载，下次启动也会读取更新。独立默认样本保留为 [fileX.example.conf](fileX.example.conf)，供 `--init-config` 使用；初始化不会覆盖已有配置。用 `--config PATH` 可选择其他配置。颜色必须写成 `"#RRGGBB"`，例如 `".js" = "#FFD700"`，并放在 `[extension_colors]` 下；`#ffd700` 同样有效。非空的 `NO_COLOR` 环境变量会关闭 TUI 颜色；需要彩色时先 `unset NO_COLOR`。
 
@@ -249,8 +249,10 @@ sequence = ["README.md", "d-%", "%-d", "%"]
 
 Ctrl+F（或 `/`）输入关键词并 Enter 后进入搜索模式：↑／↓ 在匹配项目之间循环，可跨目录定位；n/N 仍可切换匹配。单个结果保持选中，零结果不移动。Esc 退出搜索模式，保留当前光标及展开状态；随后 ↑／↓ 恢复同级树导航。搜索模式中首次 Esc 不清空多选，也不取消待执行的复制／移动；再次 Esc 按原规则处理。
 
-在 Arch / KDE / Wayland 下可使用相邻 [桌面整合](../integrate-toolkit-arch/README.md)：光标选中文件后按 **T**，进入原生竖向 Toolkit 工具菜单，↑↓／Enter 选方法，再选择保存目录与结果文件名。`[keys] toolkit = "T"` 可改键；`FILEX_TOOLKIT_DESKTOP` 可指定其他启动器。原文件保留，已有结果名称不覆盖。
+在 Arch / KDE / Wayland 下可使用相邻 [桌面整合](https://github.com/Azusalina/integrate-toolkit-arch/blob/master/README.md)：光标选中文件后按 **T**，进入原生竖向 Toolkit 工具菜单，↑↓／Enter 选方法，再选择保存目录与结果文件名。`[keys] toolkit = "T"` 可改键；`FILEX_TOOLKIT_DESKTOP` 可指定其他启动器。原文件保留，已有结果名称不覆盖。
 
 **F 临时聚焦**：选中文件／文件夹按 F，仅在该项的直接父目录内隐藏其他同级项，保留该项及其展开内容；父目录及更高祖先的其他分支照常显示和导航，↑↓ 跳过被隐藏项；各父目录可分别聚焦并叠加；在已聚焦项上再按 F，恢复该级并清除其全部子级聚焦，其他分支的聚焦保留。保留原根目录、展开状态、多选及排序，不修改 excluded_paths，不写入配置；退出重启即恢复。搜索跳过被隐藏的同级项及其子树，其他分支仍可查找，更换根目录清空聚焦，聚焦项被删除后清理对应记录。快捷键可用 `[keys] temporary_focus = "F"` 修改，小写 f 仍为设为根目录。
 
 选中文件夹后按 **@（Shift+2）**，输入 `unzip archive.zip` 等命令并 Enter，在当前终端前台执行，显示输出和错误，支持覆盖提示等交互输入。命令结束后 Enter 返回并刷新树，Ctrl+C 可中断命令。`!` 仍在后台执行并写日志；两者都使用所选目录作为工作目录。`[keys] run_foreground = "@"` 可自定义。普通终端不能单独区分 ! 与 Shift+!，因此使用 @ 作为可兼容 TTY 的前台入口。
+
+本地独立仓库位于 `/home/a/Documents/products/filex`，远端为 [Azusalina/filex](https://github.com/Azusalina/filex)。在本目录分别执行 `git add`、`git commit`、`git push`；源码已迁出 `someProducts`，母仓库不再代推本项目。
