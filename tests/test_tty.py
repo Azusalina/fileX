@@ -295,6 +295,8 @@ class TtyTests(unittest.TestCase):
                 self.assertEqual(tmux('show-options','-s','-v','extended-keys'),original_keys)
                 self.assertEqual(tmux('show-options','-s','-v','focus-events'),original_focus)
                 tmux('send-keys','-t',source,'Right');tmux('send-keys','-t',source,'-l','o')
+                wait(lambda:'Open file in terminal' in tmux('capture-pane','-p','-t',source))
+                tmux('send-keys','-t',source,'Down','Enter')
                 wait(records.exists);self.assertEqual(json.loads(records.read_text()),[right,str(note),str(root)])
                 tmux('send-keys','-t',source,'-l','Q');wait(lambda:tmux('display-message','-p','-t',source,'#{pane_current_command}')=='bash')
             finally:

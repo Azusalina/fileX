@@ -84,7 +84,7 @@ Linux 原生控制台（`TERM=linux` 或识别到真实 VT）自动使用 16 色
 
 复制／移动始终在同一棵树中选择目标，或按 t 输入路径，目录内 + 直接放入；无需切换操作侧。
 
-Enter 在 folder 上直接展开子树，保留其他已展开分支；子级仍通过左右方向键进入。右侧镜像栏按现有方向向左展开。`h` 收起当前 folder；`w` 才显示目录打开方式菜单。TUI 的终端编辑器（如 Vim/Neovim/Nano）优先复用同一 tmux window 内右侧空闲 pane，并切换焦点过去；没有合适 pane、pane 繁忙或已有未提交命令时，在当前终端运行，退出后返回原树。
+Enter 在 folder 上直接展开子树，保留其他已展开分支；子级仍通过左右方向键进入。右侧镜像栏按现有方向向左展开。`h` 收起当前 folder；`w` 才显示目录打开方式菜单。TUI 用终端程序（如 Vim/Neovim/Nano）打开文件时，会检测同一 tmux window 内上下左右相邻的空闲 pane，并列出方向、pane ID、shell 和目录。用 ↑↓ / j、k 选择，Enter 在所选 pane 打开并切换焦点；可选“当前终端”，Esc 取消。没有合适空闲 pane 时直接在当前终端运行，退出后返回原树；选择期间目标变忙、关闭或出现未提交命令时拒绝发送，可再次打开重新选择。
 
 软链接显示为 `a------b`，连接线和目标文件名 `b` 默认靛蓝色 `#4B0082`、加粗；长名称会截断，`q` / `I` 可查看完整目标路径。`[colors] link_color` 可改颜色。在 `a` 上按展开箭头（左侧 `→`、右侧 `←`）或 `l` 选中目标 `b`，目标名反色并保持链接颜色加粗；按返回父级箭头回到 `a`（左侧 `←`、右侧 `→`）。选中 `b` 后按 `x` 退出到实际目标所在目录（目标是目录时进入该目录），`q` / `I`、预览、打开方式及复制路径也对应目标；`f` 将目标目录设为根。相对路径及连续软链接会解析到实际目标，断开或循环链接显示错误。上下移动回到链接所在层的正常选择。目标名模式中的文件操作先按 `f` 进入实际目录，或 `←` 选回原链接。多个硬链接的文件标为 `H×数量`；`q` / `I` 显示链接目标、状态及当前根目录内找到的其他硬链接路径。扫描受 `[links] scan_limit` / `max_results` 限制，包含隐藏项，不跟随软链接；目录的链接计数不会误标为硬链接文件。
 
@@ -96,7 +96,7 @@ Enter 在 folder 上直接展开子树，保留其他已展开分支；子级仍
 
 个人配置位于 `~/.config/fileX/filex.conf`（遵循 XDG_CONFIG_HOME），本机已创建。项目只保留 [filex.conf](filex.conf) 作为主配置的软链接入口，重复的 `fileX.conf` 已移除；编辑并保存后，TUI 按 `,` 重载，下次启动也会读取更新。独立默认样本保留为 [fileX.example.conf](fileX.example.conf)，供 `--init-config` 使用；初始化不会覆盖已有配置。用 `--config PATH` 可选择其他配置。颜色必须写成 `"#RRGGBB"`，例如 `".js" = "#FFD700"`，并放在 `[extension_colors]` 下；`#ffd700` 同样有效。非空的 `NO_COLOR` 环境变量会关闭 TUI 颜色；需要彩色时先 `unset NO_COLOR`。
 
-配置可以定制：隐藏文件、排序、目录显示 / 缓存 / 展开上限、搜索上限、节点间距、标签宽度、行距、Dashboard 宽度、预览大小 / 开头行数、链接扫描上限、单字符、Ctrl+字母、Ctrl+Shift+字母或 Ctrl+Alt+字母快捷键、打开程序和参数、扩展名默认打开方式、扩展名颜色、按目录名设置颜色（含隐藏目录）、祖先路径高亮、启动时的分组树设置，以及 tmux 右侧打开开关、TUI 自动英文输入法。例如：
+配置可以定制：隐藏文件、排序、目录显示 / 缓存 / 展开上限、搜索上限、节点间距、标签宽度、行距、Dashboard 宽度、预览大小 / 开头行数、链接扫描上限、单字符、Ctrl+字母、Ctrl+Shift+字母或 Ctrl+Alt+字母快捷键、打开程序和参数、扩展名默认打开方式、扩展名颜色、按目录名设置颜色（含隐藏目录）、祖先路径高亮、启动时的分组树设置，以及 tmux 空闲 pane 选择开关、TUI 自动英文输入法。例如：
 
 ```toml
 [terminal]
@@ -106,7 +106,7 @@ charset = "auto"    # auto / ascii / unicode
 cli_opener = "auto" # 或 nano / vim / nvim / 自定义 terminal=true 的 opener
 
 [tmux]
-open_in_right_pane = true
+open_in_right_pane = true # 保留旧配置名：启用四方向目标选择；false 使用当前终端
 
 [open_defaults]
 ".py" = "vscodium"
@@ -268,3 +268,43 @@ Ctrl+F（或 `/`）输入关键词并 Enter 后进入搜索模式：↑／↓ �
 ## 独立仓库迁移（2026-10-27）
 
 源码及本地数据迁至 `/home/a/Documents/products/filex`，已有提交历史保留。现在使用本项目自己的 `.git` 和 `origin` 独立提交、推送；不再通过 `someProducts` 的 push hook 发布。本次目录／仓库重命名保留配置目录、应用名称和已有用户数据。
+
+
+## tmux 空闲窗格选择（2026-10-30）
+
+此前 `src/tmux.rs` 只会自动寻找右侧空闲 shell。现在 `idle_panes()` 在
+FileX 所在的同一个 tmux window 中读取窗格几何信息，筛选与当前窗格
+上下左右边缘相邻且有实际重叠的窗格；不包含斜角、隔着其他窗格的远端窗格，
+也不跨 window / session。一个方向有多个相邻窗格时分别列出。目标列表按
+上、下、左、右排序，显示方向、pane ID、shell、尺寸和工作目录，首项为
+“当前终端”；↑↓ / j、k 选择，Enter 确认，Esc 取消。沿用 TUI 现有选择界面，
+没有自动创建、拆分或关闭窗格。
+
+空闲判定沿用保守的 Linux `/proc` 检查：已识别的 shell 在前台、休眠且无
+子进程；可见光标停在没有草稿的常规 `$` / `#` / `%` / `>` 提示符末尾。
+无法识别的自定义提示符可能不被列出。复制模式、dead、alternate screen、
+输入禁用或 synchronize-panes 状态均排除。仅终端打开程序参与选择，桌面程序
+和内置预览不变；没有候选窗格或不在 tmux 内时保留当前终端的打开方式。
+兼容既有 `[tmux] open_in_right_pane` 布尔设置：虽然保留旧名，true 现在启用
+四方向目标选择，false 跳过检测。未改用户个人配置或 tmux 配置。
+
+`open_in_pane()` 在确认后重新读取 window，并检查源 pane、目标 ID / shell PID、
+相邻关系及空闲提示符；目标在菜单打开期间变忙、产生草稿、移出相邻位置或关闭时，
+显示错误而不会偷偷换到其他窗格。实际发送保留绝对可执行文件和逐参数 shell
+引用，拒绝换行和 NUL；通过单个 tmux 请求依次发送 literal 文本和 Enter，
+不使用 Ctrl+U / respawn。子进程在文件所在目录运行，目标 shell 原来的目录不变。
+成功后切换到所选 pane，FileX 在原 pane 保持打开。
+
+文件：`src/tmux.rs`、`src/tui.rs`、`tests/test_tmux_panes.py`；原有
+`tests/test_tmux.py` 和 `tests/test_tty.py` 已改为确认目标后打开。
+验证使用随机独立 `tmux -L` socket 和临时文件，没有连接或操作用户的现有会话。
+Rust 几何/解析测试覆盖四边、同边多目标、斜角/远端排除及非空闲模式。
+真实九宫格 TUI 测试覆盖四向打开、原窗格、取消、跨 window 隔离、配置关闭、
+忙碌/草稿/复制模式排除、确认前新草稿及关闭目标、带引号和 shell 字符的文件名。
+这些是 Linux 上的真实 tmux 验证，未修改 Windows FileX 的原生终端行为。
+
+本次结果：`cargo test --locked` 59/59 通过；`cargo build --release --locked`
+成功，现有 `filex` 入口使用的新 release 二进制已更新。最终 release 上
+`python tests/test_tmux_panes.py -v` 2/2、`python tests/test_tmux.py -v` 1/1、
+`python tests/test_tty.py -v` 12/12 全部通过；`git diff --check` 无错误。
+测试 fixture 同时修正了旧测试对初始分组模式和窄窗格标题的假设，产品默认布局未改。
